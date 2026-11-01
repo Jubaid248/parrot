@@ -1,13 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 import { NextRequest, NextResponse } from "next/server";
 import {
-  getInterviewSession,
   updateInterviewSession,
   createAnswerRecord,
   updateAnswerRecord,
   getAnswersForSession,
 } from "@/lib/store";
 import { transcribeAudio } from "@/lib/ai/transcribe";
+import { requireUser, requireOwnedSession } from "@/lib/auth";
+import { rateLimit } from "@/lib/rateLimit";
 import { generateFollowUp } from "@/lib/ai/llm";
 import type { FollowUpStyle } from "@/lib/config/sessionScript";
 
@@ -46,6 +47,11 @@ export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await requireUser();
+    if (!user.ok) return user.response;
+    const limited = await rateLimit(user.value, "answer");
+    if (limited) return limited;
+
     const {
       sessionId,
       audioBase64,
@@ -73,14 +79,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Find the session
-    const session = await getInterviewSession(sessionId);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found." },
-        { status: 404 }
-      );
-    }
+    // Find the session; only its owner may answer
+    const owned = await requireOwnedSession(sessionId, user.value);
+    if (!owned.ok) return owned.response;
+    const session = owned.value;
 
     // Transcribe the audio (use live speech-to-text transcript if provided, with safe fallback)
     let transcript = "";
@@ -152,7 +154,6 @@ export async function POST(req: NextRequest) {
       // Follow-up answer — update existing answer record
       await updateAnswerRecord(sessionId, idx, {
         followUpTranscript: transcript,
-        followUpAudioBase64: audioBase64,
         followUpAudioDuration: audioDuration || 0,
         ...(blData.eyeContactPercent !== null ? { eyeContactPercent: blData.eyeContactPercent } : {}),
         ...(blData.movementScore !== null ? { movementScore: blData.movementScore } : {}),
@@ -187,7 +188,6 @@ export async function POST(req: NextRequest) {
       questionIndex: idx,
       questionText,
       answerTranscript: transcript,
-      audioBase64,
       audioDuration: audioDuration || 0,
       ...(followUpQuestion ? { followUpText: followUpQuestion } : {}),
       ...blData,

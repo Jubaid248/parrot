@@ -5,6 +5,7 @@ import Link from "next/link";
 import { friendlyError, requestErrorFrom } from "@/lib/friendlyError";
 import { useRouter, usePathname } from "next/navigation";
 import ParrotLogo from "@/components/ParrotLogo";
+import { SignedIn, SignedOut, SignInButton, UserButton, useAuth, useClerk } from "@clerk/nextjs";
 
 export default function SiteNav() {
   const router = useRouter();
@@ -14,6 +15,8 @@ export default function SiteNav() {
   const [loadingTrack, setLoadingTrack] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { isSignedIn } = useAuth();
+  const clerk = useClerk();
 
   // Close the mobile menu whenever the route changes
   useEffect(() => {
@@ -33,6 +36,13 @@ export default function SiteNav() {
   const handleLaunchTrack = async (
     track: "ielts-speaking" | "communication-builder" | "debate-practice" | "negotiation-practice"
   ) => {
+    // Every practice belongs to an account, so ask to sign in first
+    if (!isSignedIn) {
+      setDropdownOpen(false);
+      setMobileOpen(false);
+      clerk.openSignIn();
+      return;
+    }
     setLoadingTrack(track);
     try {
       const res = await fetch("/api/interview/start", {
@@ -227,13 +237,33 @@ export default function SiteNav() {
         </nav>
 
         {/* Right CTA button + mobile menu toggle */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          <SignedOut>
+            <SignInButton mode="modal">
+              <button className="hidden sm:block text-sm font-medium px-3 py-2 rounded-xl text-stone-muted hover:text-ink transition-colors">
+                Sign in
+              </button>
+            </SignInButton>
+          </SignedOut>
+          <SignedIn>
+            <Link
+              href="/account"
+              className={`hidden sm:block text-sm font-medium px-3 py-2 rounded-xl transition-colors ${
+                pathname === "/account" ? "text-ink bg-cream" : "text-stone-muted hover:text-ink"
+              }`}
+            >
+              My interviews
+            </Link>
+          </SignedIn>
           <Link
             href="/mock-interview"
             className="text-sm font-semibold px-5 py-2.5 rounded-xl bg-moss hover:bg-moss-deep text-cream transition-all duration-200 active:scale-95 whitespace-nowrap"
           >
             Start practicing
           </Link>
+          <SignedIn>
+            <UserButton />
+          </SignedIn>
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
             className="sm:hidden w-11 h-11 flex items-center justify-center rounded-full text-ink hover:bg-cream transition-colors"
@@ -276,6 +306,23 @@ export default function SiteNav() {
           >
             Creator
           </Link>
+          <SignedIn>
+            <Link
+              href="/account"
+              className={`block px-4 py-3 rounded-2xl text-sm font-medium hover:bg-cream ${
+                pathname === "/account" ? "text-ink font-semibold" : "text-stone-muted"
+              }`}
+            >
+              My interviews
+            </Link>
+          </SignedIn>
+          <SignedOut>
+            <SignInButton mode="modal">
+              <button className="w-full text-left px-4 py-3 rounded-2xl text-sm font-medium text-stone-muted hover:bg-cream">
+                Sign in
+              </button>
+            </SignInButton>
+          </SignedOut>
           <div className="px-4 pt-3 pb-1 text-[11px] font-mono uppercase tracking-wider text-slate-400 font-semibold border-t border-slate-100 mt-1">
             More practice
           </div>

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser, requireOwnedSession } from "@/lib/auth";
 import {
-  getInterviewSession,
   getAnswersForSession,
   getFeedbackReport,
 } from "@/lib/store";
@@ -12,13 +12,11 @@ export async function GET(
   try {
     const { sessionId } = params;
 
-    const session = await getInterviewSession(sessionId);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found." },
-        { status: 404 }
-      );
-    }
+    const user = await requireUser();
+    if (!user.ok) return user.response;
+    const owned = await requireOwnedSession(sessionId, user.value);
+    if (!owned.ok) return owned.response;
+    const session = owned.value;
 
     const answers = await getAnswersForSession(sessionId);
     const report = await getFeedbackReport(sessionId);

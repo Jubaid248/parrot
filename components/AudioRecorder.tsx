@@ -68,6 +68,9 @@ const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>(functi
   // This feels like a natural human conversational pause without unnecessary waiting.
   const SILENCE_SUBMIT_MS = 1500;
 
+  // Hard stop for any single answer, so uploads stay well under the 4.5 MB request limit
+  const MAX_RECORDING_SEC = 240;
+
   const cleanupAudio = () => {
     if (silenceIntervalRef.current) {
       clearInterval(silenceIntervalRef.current);
@@ -264,7 +267,8 @@ const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>(functi
         }
       }
 
-      const mediaRecorder = new MediaRecorder(stream, options);
+      // Speech-quality bitrate: ~1 MB for the full 4 minutes
+      const mediaRecorder = new MediaRecorder(stream, { ...options, audioBitsPerSecond: 32000 });
       chunksRef.current = [];
       mediaRecorderRef.current = mediaRecorder;
       isAbortingRef.current = false;
@@ -447,7 +451,9 @@ const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>(functi
       setPermissionDenied(false);
 
       timerRef.current = setInterval(() => {
-        setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+        const seconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
+        setElapsed(seconds);
+        if (seconds >= MAX_RECORDING_SEC) stopRecordingRef.current();
       }, 1000);
 
       // Robust Hands-Free Silence Detection (Only active in Serious Mode)

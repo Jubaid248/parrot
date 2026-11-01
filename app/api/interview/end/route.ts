@@ -1,17 +1,23 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 import { NextRequest, NextResponse } from "next/server";
 import {
-  getInterviewSession,
   updateInterviewSession,
   getAnswersForSession,
 } from "@/lib/store";
 import { generateFeedbackReport } from "@/lib/ai/llm";
+import { requireUser, requireOwnedSession } from "@/lib/auth";
+import { rateLimit } from "@/lib/rateLimit";
 
 // AI calls can be slow; give Vercel functions up to 60s instead of the default
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await requireUser();
+    if (!user.ok) return user.response;
+    const limited = await rateLimit(user.value, "end");
+    if (limited) return limited;
+
     const { sessionId, track = "mock-interview" } = await req.json();
 
     if (!sessionId) {
@@ -21,13 +27,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const session = await getInterviewSession(sessionId);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found." },
-        { status: 404 }
-      );
-    }
+    const owned = await requireOwnedSession(sessionId, user.value);
+    if (!owned.ok) return owned.response;
+    const session = owned.value;
 
     const answers = await getAnswersForSession(sessionId);
     if (answers.length === 0) {

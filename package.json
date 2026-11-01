@@ -9,9 +9,12 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.39.8",
     "@mediapipe/tasks-vision": "^1.0.1",
     "@types/pdf-parse": "^1.1.5",
     "@types/uuid": "^10.0.0",
+    "@upstash/ratelimit": "^2.2.0",
+    "@upstash/redis": "^1.40.0",
     "mongoose": "^9.10.1",
     "next": "14.2.35",
     "pdf-parse": "^1.1.1",

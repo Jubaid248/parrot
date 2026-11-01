@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
+import { rateLimit } from "@/lib/rateLimit";
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await requireUser();
+    if (!user.ok) return user.response;
+    const limited = await rateLimit(user.value, "resume");
+    if (limited) return limited;
+
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
 
