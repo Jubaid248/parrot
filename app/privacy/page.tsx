@@ -15,8 +15,9 @@ export default function PrivacyPage() {
       <h2>What we collect</h2>
       <ul>
         <li>
-          <strong>Your account:</strong> your name, email address and profile picture from the sign-in method you
-          choose (for example Google).
+          <strong>Your sign-in:</strong> you sign in with Google. We receive your name, email address and profile
+          picture to show you who&apos;s signed in, and we store only Google&apos;s account id to link your practice
+          sessions to you.
         </li>
         <li>
           <strong>What you give us to set up a practice:</strong> for mock interviews, the job description and the
@@ -50,7 +51,7 @@ export default function PrivacyPage() {
       <h2>Who processes your data</h2>
       <p>We use these service providers to run Parrot. Each only receives what it needs for its job:</p>
       <ul>
-        <li><strong>Clerk</strong>: sign-in and account management.</li>
+        <li><strong>Google</strong>: signing you in.</li>
         <li><strong>Vercel</strong>: hosting the website and its servers.</li>
         <li><strong>MongoDB Atlas</strong> (stored in Mumbai, India): your sessions, transcripts and reports.</li>
         <li><strong>Groq</strong>: the AI that writes questions, follow-ups and feedback from your text.</li>
@@ -60,8 +61,8 @@ export default function PrivacyPage() {
 
       <h2>How long we keep it</h2>
       <p>
-        Practice sessions, transcripts and reports are deleted automatically 90 days after they are created. Your
-        account stays until you delete it.
+        Practice sessions, transcripts and reports are deleted automatically 90 days after they are created. We keep
+        no separate account record.
       </p>
 
       <h2>Your choices and rights</h2>
@@ -71,7 +72,8 @@ export default function PrivacyPage() {
           <Link href="/account" className="text-moss underline underline-offset-2">My interviews</Link> → Delete my data.
         </li>
         <li>
-          <strong>Delete your account</strong> from the profile menu → Manage account → Security → Delete account.
+          <strong>Disconnect Parrot from Google</strong> any time in your Google Account → Security → Third-party
+          apps and services.
         </li>
         <li>You can also ask us for a copy of your data or to correct it.</li>
       </ul>

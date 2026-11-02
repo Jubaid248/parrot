@@ -130,8 +130,8 @@ export default function AccountPage() {
       <section className="space-y-3 rounded-3xl border border-line bg-paper p-6">
         <h2 className="font-semibold text-ink">Delete my data</h2>
         <p className="text-sm text-stone-muted">
-          Permanently deletes all your practice sessions, transcripts and reports. This can&apos;t be undone. To delete
-          your account itself, use <span className="font-medium text-ink">Manage account</span> in the profile menu.
+          Permanently deletes all your practice sessions, transcripts and reports. This can&apos;t be undone. Parrot
+          keeps nothing else about you, and your Google account isn&apos;t affected.
         </p>
         {confirmDelete ? (
           <div className="flex flex-wrap items-center gap-2">

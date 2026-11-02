@@ -1,22 +1,20 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
+import { auth } from "@/auth";
 
 // Pages that need a signed-in user. API routes check auth themselves so they
 // can answer with JSON instead of a sign-in redirect.
-const isProtectedPage = createRouteMatcher([
-  "/mock-interview(.*)",
-  "/interview(.*)",
-  "/report(.*)",
-  "/account(.*)",
-]);
+const PROTECTED_PAGES = ["/mock-interview", "/interview", "/report", "/account"];
 
-export default clerkMiddleware(async (auth, req) => {
-  if (isProtectedPage(req)) await auth.protect();
+export default auth((req) => {
+  const { pathname, search } = req.nextUrl;
+  const isProtected = PROTECTED_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  if (isProtected && !req.auth) {
+    const signIn = new URL("/sign-in", req.nextUrl.origin);
+    signIn.searchParams.set("callbackUrl", pathname + search);
+    return NextResponse.redirect(signIn);
+  }
 });
 
 export const config = {
-  matcher: [
-    // Skip Next.js internals and static files
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/(api|trpc)(.*)",
-  ],
+  matcher: ["/mock-interview/:path*", "/interview/:path*", "/report/:path*", "/account/:path*"],
 };

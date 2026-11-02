@@ -5,7 +5,7 @@ import Link from "next/link";
 import { friendlyError, requestErrorFrom } from "@/lib/friendlyError";
 import { useRouter, usePathname } from "next/navigation";
 import ParrotLogo from "@/components/ParrotLogo";
-import { SignedIn, SignedOut, SignInButton, UserButton, useAuth, useClerk } from "@clerk/nextjs";
+import { signIn, signOut, useSession } from "next-auth/react";
 
 export default function SiteNav() {
   const router = useRouter();
@@ -15,8 +15,9 @@ export default function SiteNav() {
   const [loadingTrack, setLoadingTrack] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { isSignedIn } = useAuth();
-  const clerk = useClerk();
+  const { data: session, status } = useSession();
+  const isSignedIn = status === "authenticated";
+  const user = session?.user;
 
   // Close the mobile menu whenever the route changes
   useEffect(() => {
@@ -40,7 +41,7 @@ export default function SiteNav() {
     if (!isSignedIn) {
       setDropdownOpen(false);
       setMobileOpen(false);
-      clerk.openSignIn();
+      signIn("google");
       return;
     }
     setLoadingTrack(track);
@@ -238,14 +239,15 @@ export default function SiteNav() {
 
         {/* Right CTA button + mobile menu toggle */}
         <div className="flex items-center gap-2">
-          <SignedOut>
-            <SignInButton mode="modal">
-              <button className="hidden sm:block text-sm font-medium px-3 py-2 rounded-xl text-stone-muted hover:text-ink transition-colors">
-                Sign in
-              </button>
-            </SignInButton>
-          </SignedOut>
-          <SignedIn>
+          {status === "unauthenticated" && (
+            <button
+              onClick={() => signIn("google")}
+              className="hidden sm:block text-sm font-medium px-3 py-2 rounded-xl text-stone-muted hover:text-ink transition-colors"
+            >
+              Sign in
+            </button>
+          )}
+          {isSignedIn && (
             <Link
               href="/account"
               className={`hidden sm:block text-sm font-medium px-3 py-2 rounded-xl transition-colors ${
@@ -254,16 +256,28 @@ export default function SiteNav() {
             >
               My interviews
             </Link>
-          </SignedIn>
+          )}
           <Link
             href="/mock-interview"
             className="text-sm font-semibold px-5 py-2.5 rounded-xl bg-moss hover:bg-moss-deep text-cream transition-all duration-200 active:scale-95 whitespace-nowrap"
           >
             Start practicing
           </Link>
-          <SignedIn>
-            <UserButton />
-          </SignedIn>
+          {isSignedIn && (
+            <button
+              onClick={() => signOut({ callbackUrl: "/" })}
+              title={`Signed in as ${user?.email ?? user?.name ?? "you"}. Click to sign out.`}
+              aria-label="Sign out"
+              className="hidden sm:flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-line bg-cream text-sm font-semibold text-moss hover:ring-2 hover:ring-moss-light/40"
+            >
+              {user?.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={user.image} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                (user?.name ?? user?.email ?? "?").charAt(0).toUpperCase()
+              )}
+            </button>
+          )}
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
             className="sm:hidden w-11 h-11 flex items-center justify-center rounded-full text-ink hover:bg-cream transition-colors"
@@ -306,23 +320,31 @@ export default function SiteNav() {
           >
             Creator
           </Link>
-          <SignedIn>
-            <Link
-              href="/account"
-              className={`block px-4 py-3 rounded-2xl text-sm font-medium hover:bg-cream ${
-                pathname === "/account" ? "text-ink font-semibold" : "text-stone-muted"
-              }`}
-            >
-              My interviews
-            </Link>
-          </SignedIn>
-          <SignedOut>
-            <SignInButton mode="modal">
-              <button className="w-full text-left px-4 py-3 rounded-2xl text-sm font-medium text-stone-muted hover:bg-cream">
-                Sign in
+          {isSignedIn ? (
+            <>
+              <Link
+                href="/account"
+                className={`block px-4 py-3 rounded-2xl text-sm font-medium hover:bg-cream ${
+                  pathname === "/account" ? "text-ink font-semibold" : "text-stone-muted"
+                }`}
+              >
+                My interviews
+              </Link>
+              <button
+                onClick={() => signOut({ callbackUrl: "/" })}
+                className="w-full text-left px-4 py-3 rounded-2xl text-sm font-medium text-stone-muted hover:bg-cream"
+              >
+                Sign out
               </button>
-            </SignInButton>
-          </SignedOut>
+            </>
+          ) : (
+            <button
+              onClick={() => signIn("google")}
+              className="w-full text-left px-4 py-3 rounded-2xl text-sm font-medium text-stone-muted hover:bg-cream"
+            >
+              Sign in
+            </button>
+          )}
           <div className="px-4 pt-3 pb-1 text-[11px] font-mono uppercase tracking-wider text-slate-400 font-semibold border-t border-slate-100 mt-1">
             More practice
           </div>

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { auth } from "@clerk/nextjs/server";
+import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import { getInterviewSession } from "./store";
 
@@ -7,7 +7,7 @@ type Guard<T> = { ok: true; value: T } | { ok: false; response: NextResponse };
 
 /** The signed-in user's id, or a 401 response for API routes to return. */
 export async function requireUser(): Promise<Guard<string>> {
-  const { userId } = await auth();
+  const userId = (await auth())?.user?.id;
   if (!userId) {
     return {
       ok: false,

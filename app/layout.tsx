@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ClerkProvider } from "@clerk/nextjs";
+import { SessionProvider } from "next-auth/react";
 import "./globals.css";
 import SiteNav from "@/components/SiteNav";
 
@@ -16,9 +16,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider appearance={{ variables: { colorPrimary: "#2F5E25", borderRadius: "0.75rem" } }}>
-      <html lang="en" className="scroll-smooth">
-        <body className="antialiased text-ink bg-cream min-h-screen relative selection:bg-moss/20 selection:text-moss-deep">
+    <html lang="en" className="scroll-smooth">
+      <body className="antialiased text-ink bg-cream min-h-screen relative selection:bg-moss/20 selection:text-moss-deep">
+        <SessionProvider>
           {/* Floating Nav */}
           <SiteNav />
 
@@ -32,8 +32,8 @@ export default function RootLayout({
             <Link href="/privacy" className="hover:text-ink">Privacy</Link>
             <Link href="/terms" className="hover:text-ink">Terms</Link>
           </footer>
-        </body>
-      </html>
-    </ClerkProvider>
+        </SessionProvider>
+      </body>
+    </html>
   );
 }

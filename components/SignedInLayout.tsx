@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
-import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
 
 /**
  * Layout for pages that need an account. Sends signed-out visitors to sign-in
  * on the server, as a backstop to the middleware check.
  */
 export default async function SignedInLayout({ children }: { children: ReactNode }) {
-  await auth.protect();
+  const session = await auth();
+  if (!session?.user?.id) redirect("/sign-in");
   return children;
 }
