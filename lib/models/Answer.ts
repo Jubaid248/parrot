@@ -5,11 +5,9 @@ export interface IAnswer extends Document {
   questionIndex: number;
   questionText: string;
   answerTranscript: string;
-  audioBase64: string;
   audioDuration: number;
   followUpText: string | null;
   followUpTranscript: string | null;
-  followUpAudioBase64: string | null;
   followUpAudioDuration: number | null;
   // Body language signals (optional — only set when camera was enabled)
   eyeContactPercent?: number | null;
@@ -28,11 +26,9 @@ const AnswerSchema = new Schema<IAnswer>(
     questionIndex: { type: Number, required: true },
     questionText: { type: String, required: true },
     answerTranscript: { type: String, required: true },
-    audioBase64: { type: String, required: true },
     audioDuration: { type: Number, required: true },
     followUpText: { type: String, default: null },
     followUpTranscript: { type: String, default: null },
-    followUpAudioBase64: { type: String, default: null },
     followUpAudioDuration: { type: Number, default: null },
     // Body language signals (optional)
     eyeContactPercent: { type: Number, default: null },
@@ -44,6 +40,8 @@ const AnswerSchema = new Schema<IAnswer>(
 );
 
 AnswerSchema.index({ sessionId: 1, questionIndex: 1 });
+// Recordings are never stored, only transcripts; those expire with the session after 90 days
+AnswerSchema.index({ createdAt: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
 
 const Answer: Model<IAnswer> =
   mongoose.models.Answer ||

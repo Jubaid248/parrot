@@ -39,14 +39,11 @@ async function checkMongoConnection(): Promise<boolean> {
     console.log("✅ [DB] Connected to MongoDB database successfully.");
     return true;
   } catch (err) {
-    // In production the in-memory store isn't shared between server instances,
-    // so don't settle on it: say so loudly and retry Mongo on the next request.
+    // In production the in-memory store isn't shared between server instances, so
+    // using it would lose data. Fail the request instead; Mongo is retried next time.
     if (process.env.NODE_ENV === "production") {
-      console.error(
-        "❌ [DB] Could not connect to MongoDB. Check MONGODB_URI. Sessions will not persist until it connects.",
-        err
-      );
-      return false;
+      console.error("❌ [DB] Could not connect to MongoDB. Check MONGODB_URI.", err);
+      throw new Error("The database is unavailable right now. Please try again in a minute.");
     }
     isMongoAvailable = false;
     console.warn(
@@ -58,6 +55,7 @@ async function checkMongoConnection(): Promise<boolean> {
 
 export async function createInterviewSession(data: {
   sessionId: string;
+  userId: string;
   jobDescription: string;
   resumeText: string;
   questions: string[];
@@ -119,11 +117,9 @@ export async function createAnswerRecord(data: {
   questionIndex: number;
   questionText: string;
   answerTranscript: string;
-  audioBase64: string;
   audioDuration: number;
   followUpText?: string | null;
   followUpTranscript?: string | null;
-  followUpAudioBase64?: string | null;
   followUpAudioDuration?: number | null;
   eyeContactPercent?: number | null;
   movementScore?: "low" | "moderate" | "high" | null;
@@ -137,7 +133,6 @@ export async function createAnswerRecord(data: {
       ...data,
       followUpText: data.followUpText || null,
       followUpTranscript: data.followUpTranscript || null,
-      followUpAudioBase64: data.followUpAudioBase64 || null,
       followUpAudioDuration: data.followUpAudioDuration || null,
       eyeContactPercent: data.eyeContactPercent ?? null,
       movementScore: data.movementScore ?? null,
@@ -229,4 +224,53 @@ export async function getFeedbackReport(sessionId: string): Promise<any> {
   } else {
     return memoryReports.get(sessionId) || null;
   }
+}
+
+/** The user's sessions, newest first, with just what a history list needs. */
+export async function listSessionsForUser(userId: string): Promise<any[]> {
+  const useMongo = await checkMongoConnection();
+  const fields = (s: any) => ({
+    sessionId: s.sessionId,
+    track: s.track,
+    status: s.status,
+    questionCount: s.questions?.length ?? 0,
+    createdAt: s.createdAt,
+  });
+  if (useMongo) {
+    const sessions = await InterviewSession.find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .select("sessionId track status questions createdAt")
+      .lean();
+    return sessions.map(fields);
+  }
+  return Array.from(memorySessions.values())
+    .filter((s) => s.userId === userId)
+    .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+    .map(fields);
+}
+
+/** Permanently removes every session, answer and report that belongs to the user. */
+export async function deleteUserData(userId: string): Promise<number> {
+  const useMongo = await checkMongoConnection();
+  if (useMongo) {
+    const ids = (await InterviewSession.find({ userId }).select("sessionId").lean()).map((s: any) => s.sessionId);
+    await Promise.all([
+      Answer.deleteMany({ sessionId: { $in: ids } }),
+      FeedbackReport.deleteMany({ sessionId: { $in: ids } }),
+      InterviewSession.deleteMany({ userId }),
+    ]);
+    return ids.length;
+  }
+  const ids = Array.from(memorySessions.values())
+    .filter((s) => s.userId === userId)
+    .map((s) => s.sessionId);
+  for (const id of ids) {
+    memorySessions.delete(id);
+    memoryReports.delete(id);
+  }
+  for (let i = memoryAnswers.length - 1; i >= 0; i--) {
+    if (ids.includes(memoryAnswers[i].sessionId)) memoryAnswers.splice(i, 1);
+  }
+  return ids.length;
 }

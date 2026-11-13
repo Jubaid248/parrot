@@ -5,6 +5,7 @@ import Link from "next/link";
 import { friendlyError, requestErrorFrom } from "@/lib/friendlyError";
 import { useRouter, usePathname } from "next/navigation";
 import ParrotLogo from "@/components/ParrotLogo";
+import { signIn, signOut, useSession } from "next-auth/react";
 
 export default function SiteNav() {
   const router = useRouter();
@@ -14,6 +15,11 @@ export default function SiteNav() {
   const [loadingTrack, setLoadingTrack] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
+  const { data: session, status } = useSession();
+  const isSignedIn = status === "authenticated";
+  const user = session?.user;
 
   // Close the mobile menu whenever the route changes
   useEffect(() => {
@@ -25,6 +31,9 @@ export default function SiteNav() {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setDropdownOpen(false);
       }
+      if (accountRef.current && !accountRef.current.contains(event.target as Node)) {
+        setAccountOpen(false);
+      }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -33,6 +42,13 @@ export default function SiteNav() {
   const handleLaunchTrack = async (
     track: "ielts-speaking" | "communication-builder" | "debate-practice" | "negotiation-practice"
   ) => {
+    // Every practice belongs to an account, so ask to sign in first
+    if (!isSignedIn) {
+      setDropdownOpen(false);
+      setMobileOpen(false);
+      signIn("google");
+      return;
+    }
     setLoadingTrack(track);
     try {
       const res = await fetch("/api/interview/start", {
@@ -227,13 +243,69 @@ export default function SiteNav() {
         </nav>
 
         {/* Right CTA button + mobile menu toggle */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          {status === "unauthenticated" && (
+            <button
+              onClick={() => signIn("google")}
+              className="hidden sm:block text-sm font-medium px-3 py-2 rounded-xl text-stone-muted hover:text-ink transition-colors"
+            >
+              Sign in
+            </button>
+          )}
+          {isSignedIn && (
+            <Link
+              href="/account"
+              className={`hidden sm:block text-sm font-medium px-3 py-2 rounded-xl transition-colors ${
+                pathname === "/account" ? "text-ink bg-cream" : "text-stone-muted hover:text-ink"
+              }`}
+            >
+              My interviews
+            </Link>
+          )}
           <Link
             href="/mock-interview"
             className="text-sm font-semibold px-5 py-2.5 rounded-xl bg-moss hover:bg-moss-deep text-cream transition-all duration-200 active:scale-95 whitespace-nowrap"
           >
             Start practicing
           </Link>
+          {isSignedIn && (
+            <div className="relative hidden sm:block" ref={accountRef}>
+              <button
+                onClick={() => setAccountOpen(!accountOpen)}
+                aria-label="Account menu"
+                aria-expanded={accountOpen}
+                className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-line bg-cream text-sm font-semibold text-moss hover:ring-2 hover:ring-moss-light/40"
+              >
+                {user?.image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={user.image} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  (user?.name ?? user?.email ?? "?").charAt(0).toUpperCase()
+                )}
+              </button>
+              {accountOpen && (
+                <div className="absolute right-0 mt-3 w-60 rounded-2xl border border-line bg-paper p-2 shadow-[0_20px_40px_-20px_rgba(23,34,26,0.35)] z-50 animate-speech-pop">
+                  <div className="px-3 py-2 border-b border-line mb-1">
+                    <p className="text-sm font-semibold text-ink truncate">{user?.name}</p>
+                    <p className="text-xs text-stone-muted truncate">{user?.email}</p>
+                  </div>
+                  <Link
+                    href="/account"
+                    onClick={() => setAccountOpen(false)}
+                    className="block rounded-xl px-3 py-2 text-sm text-ink hover:bg-cream"
+                  >
+                    My interviews
+                  </Link>
+                  <button
+                    onClick={() => signOut({ callbackUrl: "/" })}
+                    className="w-full text-left rounded-xl px-3 py-2 text-sm text-ink hover:bg-cream"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
             className="sm:hidden w-11 h-11 flex items-center justify-center rounded-full text-ink hover:bg-cream transition-colors"
@@ -276,6 +348,31 @@ export default function SiteNav() {
           >
             Creator
           </Link>
+          {isSignedIn ? (
+            <>
+              <Link
+                href="/account"
+                className={`block px-4 py-3 rounded-2xl text-sm font-medium hover:bg-cream ${
+                  pathname === "/account" ? "text-ink font-semibold" : "text-stone-muted"
+                }`}
+              >
+                My interviews
+              </Link>
+              <button
+                onClick={() => signOut({ callbackUrl: "/" })}
+                className="w-full text-left px-4 py-3 rounded-2xl text-sm font-medium text-stone-muted hover:bg-cream"
+              >
+                Sign out
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => signIn("google")}
+              className="w-full text-left px-4 py-3 rounded-2xl text-sm font-medium text-stone-muted hover:bg-cream"
+            >
+              Sign in
+            </button>
+          )}
           <div className="px-4 pt-3 pb-1 text-[11px] font-mono uppercase tracking-wider text-slate-400 font-semibold border-t border-slate-100 mt-1">
             More practice
           </div>

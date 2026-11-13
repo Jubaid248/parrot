@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { createInterviewSession } from "@/lib/store";
+import { requireUser } from "@/lib/auth";
+import { rateLimit } from "@/lib/rateLimit";
 import { generateInitialQuestions } from "@/lib/ai/llm";
 import { getCommunicationBuilderSessionQuestions, QuestionBankItem } from "@/lib/config/questionBank";
 import { getIeltsSpeakingSessionQuestions } from "@/lib/config/ieltsQuestionBank";
@@ -13,6 +15,12 @@ export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await requireUser();
+    if (!user.ok) return user.response;
+    const userId = user.value;
+    const limited = await rateLimit(userId, "startHourly", "startDaily");
+    if (limited) return limited;
+
     const { resumeText = "", jobDescription = "", track = "mock-interview" } = await req.json();
 
     const sessionId = uuidv4();
@@ -73,6 +81,7 @@ export async function POST(req: NextRequest) {
 
     const session = await createInterviewSession({
       sessionId,
+      userId,
       jobDescription: jobDescription || defaultJob,
       resumeText: resumeText || "N/A",
       questions,

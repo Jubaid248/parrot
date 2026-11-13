@@ -102,6 +102,9 @@ const FeedbackReportSchema = new Schema<IFeedbackReport>(
   { timestamps: true }
 );
 
+// Reports expire with their session after 90 days
+FeedbackReportSchema.index({ createdAt: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
+
 const FeedbackReport: Model<IFeedbackReport> =
   mongoose.models.FeedbackReport ||
   mongoose.model<IFeedbackReport>("FeedbackReport", FeedbackReportSchema);

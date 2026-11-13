@@ -73,6 +73,9 @@ export function friendlyError(context: ErrorContext, err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");
 
   if (status === 404 && NOT_FOUND[context]) return NOT_FOUND[context] as string;
+  if (status === 401) return "Your sign-in has expired. Sign in again to continue.";
+  // The rate limiter's message already says how long to wait
+  if (status === 429) return raw || "You've reached the practice limit for now. Try again later.";
 
   if (context === "resume") {
     if (/extract readable text|no text|scanned/i.test(raw)) {
