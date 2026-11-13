@@ -15,6 +15,8 @@ export default function SiteNav() {
   const [loadingTrack, setLoadingTrack] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
   const { data: session, status } = useSession();
   const isSignedIn = status === "authenticated";
   const user = session?.user;
@@ -28,6 +30,9 @@ export default function SiteNav() {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setDropdownOpen(false);
+      }
+      if (accountRef.current && !accountRef.current.contains(event.target as Node)) {
+        setAccountOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -264,19 +269,42 @@ export default function SiteNav() {
             Start practicing
           </Link>
           {isSignedIn && (
-            <button
-              onClick={() => signOut({ callbackUrl: "/" })}
-              title={`Signed in as ${user?.email ?? user?.name ?? "you"}. Click to sign out.`}
-              aria-label="Sign out"
-              className="hidden sm:flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-line bg-cream text-sm font-semibold text-moss hover:ring-2 hover:ring-moss-light/40"
-            >
-              {user?.image ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={user.image} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-              ) : (
-                (user?.name ?? user?.email ?? "?").charAt(0).toUpperCase()
+            <div className="relative hidden sm:block" ref={accountRef}>
+              <button
+                onClick={() => setAccountOpen(!accountOpen)}
+                aria-label="Account menu"
+                aria-expanded={accountOpen}
+                className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-line bg-cream text-sm font-semibold text-moss hover:ring-2 hover:ring-moss-light/40"
+              >
+                {user?.image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={user.image} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  (user?.name ?? user?.email ?? "?").charAt(0).toUpperCase()
+                )}
+              </button>
+              {accountOpen && (
+                <div className="absolute right-0 mt-3 w-60 rounded-2xl border border-line bg-paper p-2 shadow-[0_20px_40px_-20px_rgba(23,34,26,0.35)] z-50 animate-speech-pop">
+                  <div className="px-3 py-2 border-b border-line mb-1">
+                    <p className="text-sm font-semibold text-ink truncate">{user?.name}</p>
+                    <p className="text-xs text-stone-muted truncate">{user?.email}</p>
+                  </div>
+                  <Link
+                    href="/account"
+                    onClick={() => setAccountOpen(false)}
+                    className="block rounded-xl px-3 py-2 text-sm text-ink hover:bg-cream"
+                  >
+                    My interviews
+                  </Link>
+                  <button
+                    onClick={() => signOut({ callbackUrl: "/" })}
+                    className="w-full text-left rounded-xl px-3 py-2 text-sm text-ink hover:bg-cream"
+                  >
+                    Sign out
+                  </button>
+                </div>
               )}
-            </button>
+            </div>
           )}
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
