@@ -5,7 +5,9 @@ import {
   createAnswerRecord,
   updateAnswerRecord,
   getAnswersForSession,
+  findAnswerRecord,
 } from "@/lib/store";
+import { sanitizeTally } from "@/lib/bodyLanguage/metrics";
 import { transcribeAudio } from "@/lib/ai/transcribe";
 import { requireUser, requireOwnedSession } from "@/lib/auth";
 import { rateLimit } from "@/lib/rateLimit";
@@ -22,6 +24,8 @@ function resolveFollowUpStyle(track: string, detail: any): FollowUpStyle | null 
   if (track === "ielts-speaking") return null;
   return "interview";
 }
+
+const MOVEMENT_SCORES = new Set(["low", "moderate", "high"]);
 
 // Role-plays where the counterpart must remember what was already said
 const CONVERSATIONAL_TRACKS = new Set(["negotiation-practice"]);
@@ -56,8 +60,8 @@ export async function POST(req: NextRequest) {
       sessionId,
       audioBase64,
       audioDuration,
-      questionText,
-      isFollowUp,
+      questionIndex: clientQuestionIndex,
+      isFollowUp: clientIsFollowUp,
       liveText,
       track = "mock-interview",
       eyeContactPercent,
@@ -66,15 +70,21 @@ export async function POST(req: NextRequest) {
     } = await req.json();
 
     const blData = {
-      eyeContactPercent: typeof eyeContactPercent === "number" ? eyeContactPercent : null,
-      movementScore: movementScore || null,
+      eyeContactPercent:
+        typeof eyeContactPercent === "number" && Number.isFinite(eyeContactPercent)
+          ? Math.min(100, Math.max(0, eyeContactPercent))
+          : null,
+      movementScore: MOVEMENT_SCORES.has(movementScore) ? (movementScore as "low" | "moderate" | "high") : null,
     };
-    // Full eye-movement and posture tally for this recording (counts only, never video)
-    const blTally = bodyLanguage && typeof bodyLanguage === "object" && bodyLanguage.samples > 0 ? bodyLanguage : null;
+    // Full eye-movement and posture tally for this recording (counts only, never video).
+    // It comes from the browser, so only known numeric fields and a capped list of moments are kept.
+    const blTally = sanitizeTally(bodyLanguage);
+    const duration =
+      typeof audioDuration === "number" && Number.isFinite(audioDuration) ? Math.min(3600, Math.max(0, audioDuration)) : 0;
 
-    if (!sessionId || !audioBase64 || !questionText) {
+    if (typeof sessionId !== "string" || !sessionId || typeof audioBase64 !== "string" || !audioBase64) {
       return NextResponse.json(
-        { error: "sessionId, audioBase64, and questionText are required." },
+        { error: "sessionId and audioBase64 are required." },
         { status: 400 }
       );
     }
@@ -84,10 +94,45 @@ export async function POST(req: NextRequest) {
     if (!owned.ok) return owned.response;
     const session = owned.value;
 
+    // The server's copy of the session decides which question this answer belongs to.
+    // A retry that arrives after the session already moved on is rejected rather than
+    // being saved against the wrong question.
+    const idx: number = session.currentQuestionIndex;
+    const totalQuestions: number = session.questions.length;
+    if (session.status === "completed" || idx >= totalQuestions) {
+      return NextResponse.json(
+        { error: "This practice session is already finished.", resync: true },
+        { status: 409 }
+      );
+    }
+    const isFollowUp = Boolean(session.awaitingFollowUp);
+    if (
+      (typeof clientQuestionIndex === "number" && clientQuestionIndex !== idx) ||
+      (typeof clientIsFollowUp === "boolean" && clientIsFollowUp !== isFollowUp)
+    ) {
+      return NextResponse.json(
+        { error: "This answer was already received.", resync: true },
+        { status: 409 }
+      );
+    }
+
+    let questionText: string = session.questions[idx];
+    if (isFollowUp) {
+      const record = await findAnswerRecord(sessionId, idx);
+      if (!record?.followUpText) {
+        return NextResponse.json(
+          { error: "This answer was already received.", resync: true },
+          { status: 409 }
+        );
+      }
+      questionText = record.followUpText;
+    }
+
     // Transcribe the audio (use live speech-to-text transcript if provided, with safe fallback)
     let transcript = "";
-    if (liveText && liveText.trim().length > 0) {
-      transcript = liveText.trim();
+    if (typeof liveText === "string" && liveText.trim().length > 0) {
+      // Several minutes of speech is well under this; it only stops oversized payloads
+      transcript = liveText.trim().slice(0, 20_000);
     } else {
       try {
         const trResult = await transcribeAudio(audioBase64);
@@ -100,8 +145,6 @@ export async function POST(req: NextRequest) {
 
     const effectiveTrack = session.track || track || "mock-interview";
 
-    const idx = session.currentQuestionIndex;
-    const totalQuestions = session.questions.length;
     const isConversational = CONVERSATIONAL_TRACKS.has(effectiveTrack);
     const loadHistory = async () =>
       isConversational ? formatHistory(await getAnswersForSession(sessionId)) : undefined;
@@ -154,7 +197,7 @@ export async function POST(req: NextRequest) {
       // Follow-up answer — update existing answer record
       await updateAnswerRecord(sessionId, idx, {
         followUpTranscript: transcript,
-        followUpAudioDuration: audioDuration || 0,
+        followUpAudioDuration: duration,
         ...(blData.eyeContactPercent !== null ? { eyeContactPercent: blData.eyeContactPercent } : {}),
         ...(blData.movementScore !== null ? { movementScore: blData.movementScore } : {}),
         ...(blTally ? { followUpBodyLanguage: blTally } : {}),
@@ -188,10 +231,10 @@ export async function POST(req: NextRequest) {
       questionIndex: idx,
       questionText,
       answerTranscript: transcript,
-      audioDuration: audioDuration || 0,
+      audioDuration: duration,
       ...(followUpQuestion ? { followUpText: followUpQuestion } : {}),
       ...blData,
-      bodyLanguage: blTally,
+      bodyLanguage: blTally as unknown as Record<string, unknown> | null,
     });
 
     if (!followUpQuestion) return advance(questionText);

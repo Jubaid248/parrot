@@ -7,8 +7,16 @@ const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
 const redis = url && token ? new Redis({ url, token }) : null;
 
+// Without Redis there are no limits, so in production AI-backed requests are refused
+// rather than letting one account spend without a cap. Local development stays open.
+const failClosed = !redis && process.env.NODE_ENV === "production";
+
 if (!redis) {
-  console.warn("⚠️ [RateLimit] Upstash Redis is not configured. Requests are not rate limited.");
+  if (failClosed) {
+    console.error("❌ [RateLimit] Upstash Redis is not configured. Refusing rate-limited requests in production.");
+  } else {
+    console.warn("⚠️ [RateLimit] Upstash Redis is not configured. Requests are not rate limited.");
+  }
 }
 
 function limiter(prefix: string, requests: number, window: `${number} ${"m" | "h" | "d"}`) {
@@ -34,6 +42,12 @@ export type RateLimitKey = keyof typeof limiters;
  * any of them is used up, or null when the request may go ahead.
  */
 export async function rateLimit(userId: string, ...keys: RateLimitKey[]): Promise<NextResponse | null> {
+  if (failClosed) {
+    return NextResponse.json(
+      { error: "Practice is temporarily unavailable. Please try again later." },
+      { status: 503 }
+    );
+  }
   for (const key of keys) {
     const l = limiters[key];
     if (!l) continue;

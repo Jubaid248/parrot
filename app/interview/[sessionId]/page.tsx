@@ -18,7 +18,7 @@ import SystemCheck from "@/components/SystemCheck";
 import InterviewCountdown from "@/components/InterviewCountdown";
 import { useProctorShield, type ProctorViolation } from "@/components/ProctorShield";
 import { useQuestionSpeech } from "@/lib/speech/useQuestionSpeech";
-import { friendlyError, requestErrorFrom } from "@/lib/friendlyError";
+import { friendlyError, requestErrorFrom, RequestError } from "@/lib/friendlyError";
 import type { BodyLanguageMetrics, BodyLanguageAnalyzer } from "@/lib/bodyLanguage/BodyLanguageAnalyzer";
 
 interface FrameworkStepItem {
@@ -277,7 +277,8 @@ export default function InterviewPage() {
             data.session.questions[data.session.currentQuestionIndex],
           isFollowUp: data.session.awaitingFollowUp || false,
           lastTranscript: null,
-          isComplete: false,
+          // Every question answered but the report not generated yet
+          isComplete: data.session.currentQuestionIndex >= data.session.questions.length,
           isProcessing: false,
         });
 
@@ -464,6 +465,13 @@ export default function InterviewPage() {
           setSessionStage("practice");
         }
       } catch (err) {
+        // The server already moved past this question (e.g. an earlier send went through
+        // but its reply was lost): reload to pick up where the session really is
+        if (err instanceof RequestError && err.status === 409) {
+          pendingAnswerRef.current = null;
+          window.location.reload();
+          return;
+        }
         setAnswerError(friendlyError("answer", err));
         setState((prev) => ({ ...prev, isProcessing: false }));
       } finally {
@@ -502,7 +510,7 @@ export default function InterviewPage() {
         sessionId,
         audioBase64,
         audioDuration: duration,
-        questionText: state.currentQuestion,
+        questionIndex: state.currentQuestionIndex,
         isFollowUp: state.isFollowUp,
         liveText,
         eyeContactPercent: blMetrics?.eyeContactPercent ?? null,
@@ -510,7 +518,7 @@ export default function InterviewPage() {
         bodyLanguage: blMetrics?.details ?? null,
       });
     },
-    [sessionId, state.currentQuestion, state.isFollowUp, state.isProcessing, state.isComplete, stop, cameraActive, sendAnswer]
+    [sessionId, state.currentQuestionIndex, state.isFollowUp, state.isProcessing, state.isComplete, stop, cameraActive, sendAnswer]
   );
 
   const retryAnswer = useCallback(() => {

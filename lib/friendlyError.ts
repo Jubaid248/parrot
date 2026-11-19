@@ -81,6 +81,7 @@ export function friendlyError(context: ErrorContext, err: unknown): string {
     if (/extract readable text|no text|scanned/i.test(raw)) {
       return "We couldn't read text from that file. If it's a scanned PDF, paste your resume as text instead.";
     }
+    if (status === 413) return "That file is too large. Upload a resume under 2 MB.";
     if (status === 400 && /file/i.test(raw)) return "Upload a PDF, TXT or Markdown file.";
   }
 
