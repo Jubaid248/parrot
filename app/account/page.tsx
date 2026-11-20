@@ -51,6 +51,11 @@ export default function AccountPage() {
       const { deleted } = await res.json();
       localStorage.removeItem("sessionHistory");
       localStorage.removeItem("currentSessionId");
+      // Draft job descriptions and resumes saved on this device
+      for (const key of ["parrot_draft_jd", "parrot_draft_resume", "totapakhi_draft_jd", "totapakhi_draft_resume"]) {
+        localStorage.removeItem(key);
+        sessionStorage.removeItem(key);
+      }
       setSessions([]);
       setDeletedNote(`Deleted ${deleted} practice session${deleted === 1 ? "" : "s"} and all their answers and reports.`);
     } catch (err) {

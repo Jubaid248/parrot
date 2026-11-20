@@ -5,6 +5,16 @@ import { useRouter } from "next/navigation";
 import FileUpload from "@/components/FileUpload";
 import { friendlyError, requestErrorFrom } from "@/lib/friendlyError";
 
+const DRAFT_JD = "parrot_draft_jd";
+const DRAFT_RESUME = "parrot_draft_resume";
+
+/** Removes job description and resume drafts that earlier versions kept in localStorage indefinitely. */
+function clearLegacyDrafts() {
+  for (const key of ["parrot_draft_jd", "parrot_draft_resume", "totapakhi_draft_jd", "totapakhi_draft_resume"]) {
+    localStorage.removeItem(key);
+  }
+}
+
 export default function MockInterviewSetupPage() {
   const router = useRouter();
   const [jobDescription, setJobDescription] = useState("");
@@ -15,25 +25,27 @@ export default function MockInterviewSetupPage() {
   const [error, setError] = useState("");
   const [missingFields, setMissingFields] = useState({ jd: false, resume: false });
 
-  // Restore saved draft from localStorage on mount
+  // The draft only survives a reload of this tab. A new visit starts blank, and
+  // drafts older versions kept in localStorage are wiped.
   useEffect(() => {
     try {
-      const savedJd = localStorage.getItem("parrot_draft_jd") ?? localStorage.getItem("totapakhi_draft_jd");
-      const savedResume = localStorage.getItem("parrot_draft_resume") ?? localStorage.getItem("totapakhi_draft_resume");
+      clearLegacyDrafts();
+      const savedJd = sessionStorage.getItem(DRAFT_JD);
+      const savedResume = sessionStorage.getItem(DRAFT_RESUME);
       if (savedJd) setJobDescription(savedJd);
       if (savedResume) {
         setResumeText(savedResume);
         setInputMode("paste");
       }
     } catch {
-      // Ignore
+      // Storage can be blocked; the form still works without a draft
     }
   }, []);
 
   const handleJdChange = (val: string) => {
     setJobDescription(val);
     try {
-      localStorage.setItem("parrot_draft_jd", val);
+      sessionStorage.setItem(DRAFT_JD, val);
     } catch {
       // Ignore
     }
@@ -42,7 +54,7 @@ export default function MockInterviewSetupPage() {
   const handleResumeChange = (val: string) => {
     setResumeText(val);
     try {
-      localStorage.setItem("parrot_draft_resume", val);
+      sessionStorage.setItem(DRAFT_RESUME, val);
     } catch {
       // Ignore
     }
@@ -75,6 +87,12 @@ export default function MockInterviewSetupPage() {
       const data = await res.json();
 
       localStorage.setItem("currentSessionId", data.sessionId);
+      try {
+        sessionStorage.removeItem(DRAFT_JD);
+        sessionStorage.removeItem(DRAFT_RESUME);
+      } catch {
+        // Ignore
+      }
 
       const history = JSON.parse(localStorage.getItem("sessionHistory") || "[]");
       history.unshift({
