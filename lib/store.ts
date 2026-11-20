@@ -112,6 +112,54 @@ export async function updateInterviewSession(
   }
 }
 
+/**
+ * A lock older than this is treated as abandoned (the answer route's own limit is 60s),
+ * so a crashed request can't block the session for good.
+ */
+const TURN_LOCK_STALE_MS = 90_000;
+
+/**
+ * Atomically claims the session's current turn for one answer request. Succeeds only
+ * when the session is still on this question and follow-up state and no other request
+ * holds the turn, so two overlapping sends can't both save an answer.
+ */
+export async function lockTurn(sessionId: string, questionIndex: number, awaitingFollowUp: boolean): Promise<boolean> {
+  const now = new Date();
+  const staleBefore = new Date(now.getTime() - TURN_LOCK_STALE_MS);
+  const useMongo = await checkMongoConnection();
+  if (useMongo) {
+    const locked = await InterviewSession.findOneAndUpdate(
+      {
+        sessionId,
+        status: "in_progress",
+        currentQuestionIndex: questionIndex,
+        awaitingFollowUp,
+        $or: [{ turnLockedAt: null }, { turnLockedAt: { $lt: staleBefore } }],
+      },
+      { $set: { turnLockedAt: now } },
+      { new: true }
+    );
+    return Boolean(locked);
+  }
+  const session = memorySessions.get(sessionId);
+  if (
+    !session ||
+    session.status !== "in_progress" ||
+    session.currentQuestionIndex !== questionIndex ||
+    Boolean(session.awaitingFollowUp) !== awaitingFollowUp ||
+    (session.turnLockedAt && session.turnLockedAt >= staleBefore)
+  ) {
+    return false;
+  }
+  session.turnLockedAt = now;
+  return true;
+}
+
+/** Releases the turn lock, whether or not the answer request succeeded. */
+export async function releaseTurn(sessionId: string): Promise<void> {
+  await updateInterviewSession(sessionId, { turnLockedAt: null });
+}
+
 export async function createAnswerRecord(data: {
   sessionId: string;
   questionIndex: number;

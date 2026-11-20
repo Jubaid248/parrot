@@ -634,8 +634,8 @@ The perAnswerFeedback array MUST contain exactly ${numAnswers} entry/entries, in
         rawLlmOutput = await sendRequest(initialMessages);
         let parsed = parseFeedbackJson(rawLlmOutput);
 
-        // Retry once on parse failure
-        if (!parsed || !Array.isArray(parsed.perAnswerFeedback) || parsed.perAnswerFeedback.length === 0) {
+        // Retry once when the output can't be parsed or doesn't cover every answer
+        if (!isCompleteFeedback(parsed, numAnswers, isIelts)) {
           console.warn(`⚠️ [generateFeedbackReport] First JSON parse attempt failed for model ${model}, retrying once...`);
           const retryMessages = [
             ...initialMessages,
@@ -643,7 +643,7 @@ The perAnswerFeedback array MUST contain exactly ${numAnswers} entry/entries, in
             {
               role: "user",
               content:
-                "Your response could not be parsed into a JSON object with 'perAnswerFeedback' array and 'overallSummary' string. Please return ONLY a valid JSON object.",
+                `Your response was not usable. Return ONLY a valid JSON object with an 'overallSummary' string and a 'perAnswerFeedback' array of exactly ${numAnswers} entries, one per answer in order, each with 'whatToImprove' and ${isIelts ? "the four band scores" : "'relevanceScore'"}.`,
             },
           ];
 
@@ -651,9 +651,9 @@ The perAnswerFeedback array MUST contain exactly ${numAnswers} entry/entries, in
           parsed = parseFeedbackJson(rawLlmOutput);
         }
 
-        if (parsed && Array.isArray(parsed.perAnswerFeedback)) {
-          llmFeedbackList = parsed.perAnswerFeedback;
-          overallSummary = parsed.overallSummary || "Interview completed. Detailed analysis generated for all responses.";
+        if (parsed && isCompleteFeedback(parsed, numAnswers, isIelts)) {
+          llmFeedbackList = parsed.perAnswerFeedback as any[];
+          overallSummary = typeof parsed.overallSummary === "string" ? parsed.overallSummary : "";
           break;
         }
       } catch (err) {
@@ -662,7 +662,7 @@ The perAnswerFeedback array MUST contain exactly ${numAnswers} entry/entries, in
     }
 
     if (llmFeedbackList.length === 0) {
-      throw new Error("Groq API failed to return valid feedback structure across all models.");
+      throw new Error("Groq API failed to return complete feedback across all models.");
     }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -672,7 +672,9 @@ The perAnswerFeedback array MUST contain exactly ${numAnswers} entry/entries, in
       sessionId,
       error: errMsg,
     });
-    overallSummary = `Feedback report completed with calculated audio metrics. Qualitative AI feedback unavailable due to error: ${errMsg}`;
+    // Nothing is saved, so the session stays open and the user can try again.
+    // A report with placeholder scores would look real, which is worse than none.
+    throw new FeedbackUnavailableError();
   }
 
   // 3. Merge non-LLM metrics with qualitative feedback
@@ -680,20 +682,22 @@ The perAnswerFeedback array MUST contain exactly ${numAnswers} entry/entries, in
   let totalBands = 0;
   let bandCount = 0;
 
+  // Every entry here passed isCompleteFeedback, so the scores are the AI's own;
+  // optional text the AI left out stays empty rather than being filled with stock phrases
   const perAnswerFeedback = perAnswerMetrics.map((metric, idx) => {
     const llmItem = llmFeedbackList[idx] || {};
-    const whatWorked = llmItem.whatWorked || "Clear explanation provided in response.";
-    const whatToImprove = llmItem.whatToImprove || (isIeltsTrack ? "Use a broader range of vocabulary and connect your ideas smoothly." : "Incorporate specific metrics and the STAR method to strengthen your answer.");
-    const rewrittenExample = llmItem.rewrittenExample || metric.answerTranscript;
+    const whatWorked = textOrEmpty(llmItem.whatWorked);
+    const whatToImprove = textOrEmpty(llmItem.whatToImprove);
+    const rewrittenExample = textOrEmpty(llmItem.rewrittenExample);
 
     if (isIeltsTrack) {
-      const fluencyCoherence = typeof llmItem.fluencyCoherence === "number" ? llmItem.fluencyCoherence : 6.5;
-      const lexicalResource = typeof llmItem.lexicalResource === "number" ? llmItem.lexicalResource : 6.5;
-      const grammaticalRange = typeof llmItem.grammaticalRange === "number" ? llmItem.grammaticalRange : 6.0;
-      const pronunciation = typeof llmItem.pronunciation === "number" ? llmItem.pronunciation : 6.5;
-      const overallBand = typeof llmItem.overallBand === "number"
-        ? llmItem.overallBand
-        : Math.round(((fluencyCoherence + lexicalResource + grammaticalRange + pronunciation) / 4) * 2) / 2;
+      const fluencyCoherence = toBand(llmItem.fluencyCoherence) as number;
+      const lexicalResource = toBand(llmItem.lexicalResource) as number;
+      const grammaticalRange = toBand(llmItem.grammaticalRange) as number;
+      const pronunciation = toBand(llmItem.pronunciation) as number;
+      const overallBand =
+        toBand(llmItem.overallBand) ??
+        (toBand((fluencyCoherence + lexicalResource + grammaticalRange + pronunciation) / 4) as number);
 
       totalBands += overallBand;
       bandCount++;
@@ -711,28 +715,33 @@ The perAnswerFeedback array MUST contain exactly ${numAnswers} entry/entries, in
         whatToImprove,
         rewrittenExample,
         relevanceNotes: whatWorked,
-        suggestions: [whatToImprove, `Band 8+ Rewritten Answer: ${rewrittenExample}`],
+        suggestions: [whatToImprove, ...(rewrittenExample ? [`Band 8+ Rewritten Answer: ${rewrittenExample}`] : [])].filter(Boolean),
       };
     }
 
-    const structureScore = typeof llmItem.structureScore === "number" ? llmItem.structureScore : 70;
-    const relevanceScore = typeof llmItem.relevanceScore === "number" ? llmItem.relevanceScore : 70;
+    const relevanceScore = toScore(llmItem.relevanceScore) as number;
+    const structureScore = toScore(llmItem.structureScore);
+    const star = llmItem.starAnalysis && typeof llmItem.starAnalysis === "object" ? llmItem.starAnalysis : null;
 
     return {
       ...metric,
-      structureScore,
+      ...(structureScore !== undefined ? { structureScore } : {}),
       relevanceScore,
       whatWorked,
       whatToImprove,
       rewrittenExample,
-      starAnalysis: llmItem.starAnalysis || {
-        situation: whatWorked,
-        task: "Addressed question requirements.",
-        action: "Explained past experience.",
-        result: whatToImprove,
-      },
+      ...(star
+        ? {
+            starAnalysis: {
+              situation: textOrEmpty(star.situation),
+              task: textOrEmpty(star.task),
+              action: textOrEmpty(star.action),
+              result: textOrEmpty(star.result),
+            },
+          }
+        : {}),
       relevanceNotes: whatWorked,
-      suggestions: [whatToImprove, `Rewritten Example: ${rewrittenExample}`],
+      suggestions: [whatToImprove, ...(rewrittenExample ? [`Rewritten Example: ${rewrittenExample}`] : [])].filter(Boolean),
     };
   });
 
@@ -778,6 +787,57 @@ The perAnswerFeedback array MUST contain exactly ${numAnswers} entry/entries, in
     overallMovementScore: report.overallMovementScore ?? overallMovementScore,
     bodyLanguageReport: report.bodyLanguageReport ?? bodyLanguageReport,
   };
+}
+
+/** Thrown when no model produced usable feedback; the end route answers 503 and saves nothing. */
+export class FeedbackUnavailableError extends Error {
+  constructor() {
+    super("Feedback could not be generated right now.");
+    this.name = "FeedbackUnavailableError";
+  }
+}
+
+function finite(value: unknown): number | undefined {
+  const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return typeof n === "number" && Number.isFinite(n) ? n : undefined;
+}
+
+/** An IELTS band clamped to 0–9 and rounded to the nearest half band. */
+function toBand(value: unknown): number | undefined {
+  const n = finite(value);
+  return n === undefined ? undefined : Math.round(Math.min(9, Math.max(0, n)) * 2) / 2;
+}
+
+/** A 0–100 score (relevance may also come back out of 10; the report handles both). */
+function toScore(value: unknown): number | undefined {
+  const n = finite(value);
+  return n === undefined ? undefined : Math.round(Math.min(100, Math.max(0, n)));
+}
+
+function textOrEmpty(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * True when the AI gave one entry per answer, each with advice and the scores
+ * the report shows: the four IELTS bands, or a relevance score for other tracks.
+ */
+function isCompleteFeedback(
+  parsed: { perAnswerFeedback?: any[] } | null,
+  numAnswers: number,
+  isIelts: boolean
+): boolean {
+  const list = parsed?.perAnswerFeedback;
+  if (!Array.isArray(list) || list.length < numAnswers) return false;
+  return list.slice(0, numAnswers).every((item) => {
+    if (!item || typeof item !== "object" || !textOrEmpty(item.whatToImprove)) return false;
+    if (isIelts) {
+      return [item.fluencyCoherence, item.lexicalResource, item.grammaticalRange, item.pronunciation].every(
+        (v) => toBand(v) !== undefined
+      );
+    }
+    return toScore(item.relevanceScore) !== undefined;
+  });
 }
 
 function parseFeedbackJson(raw: string): { perAnswerFeedback?: any[]; overallSummary?: string } | null {

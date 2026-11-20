@@ -132,6 +132,55 @@ export function emptyTally(): BodyLanguageTally {
   };
 }
 
+const MOMENT_KINDS: ReadonlySet<string> = new Set<MomentKind>([
+  "look-down",
+  "look-side",
+  "look-up",
+  "eyes-closed",
+  "face-touch",
+  "out-of-frame",
+  "reading",
+]);
+/** Upper bound for any single counter (about an hour of frames at 30 fps). */
+const MAX_COUNT = 120_000;
+
+function finiteNumber(value: unknown, max = MAX_COUNT): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(0, value)) : 0;
+}
+
+/**
+ * Rebuilds a tally received from the browser, keeping only the known numeric
+ * counters (clamped) and up to MAX_MOMENTS well-formed moments. Returns null when
+ * the input isn't a tally or has no samples.
+ */
+export function sanitizeTally(input: unknown): BodyLanguageTally | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const raw = input as Record<string, unknown>;
+  const out = emptyTally();
+  for (const key of Object.keys(out) as (keyof BodyLanguageTally)[]) {
+    if (key === "moments") continue;
+    (out[key] as number) = finiteNumber(raw[key]);
+  }
+  if (out.samples <= 0) return null;
+
+  const moments = Array.isArray(raw.moments) ? raw.moments : [];
+  for (const m of moments) {
+    if (out.moments.length >= MAX_MOMENTS) break;
+    if (!m || typeof m !== "object") continue;
+    const { t, kind, durationSec } = m as Record<string, unknown>;
+    if (typeof kind !== "string" || !MOMENT_KINDS.has(kind)) continue;
+    if (typeof t !== "number" || !Number.isFinite(t) || t < 0) continue;
+    out.moments.push({
+      t: Math.min(t, 24 * 3600),
+      kind: kind as MomentKind,
+      ...(typeof durationSec === "number" && Number.isFinite(durationSec) && durationSec >= 0
+        ? { durationSec: Math.min(durationSec, 24 * 3600) }
+        : {}),
+    });
+  }
+  return out;
+}
+
 /** Accumulates classified frames for one recording and tracks timed events. */
 export class TallyBuilder {
   private tally = emptyTally();
@@ -324,7 +373,9 @@ export function mergeTallies(items: { tally: BodyLanguageTally | null | undefine
       (out[key] as number) += (t[key] as number) || 0;
     }
     out.longestLookAwaySec = Math.max(out.longestLookAwaySec, t.longestLookAwaySec || 0);
-    out.moments.push(...(t.moments || []).map((m) => ({ ...m, q: m.q ?? q })));
+    // Older records were stored unchecked, so don't assume moments is a list
+    const moments = Array.isArray(t.moments) ? t.moments.slice(0, MAX_MOMENTS) : [];
+    out.moments.push(...moments.map((m) => ({ ...m, q: m.q ?? q })));
   }
   out.durationSec = round1(out.durationSec);
   return out;

@@ -13,6 +13,13 @@ import { getNegotiationSessionQuestions } from "@/lib/config/negotiationBank";
 // AI calls can be slow; give Vercel functions up to 60s instead of the default
 export const maxDuration = 60;
 
+const MAX_RESUME_CHARS = 15_000;
+const MAX_JOB_DESCRIPTION_CHARS = 10_000;
+
+function cleanText(value: unknown, max: number): string {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
@@ -21,7 +28,12 @@ export async function POST(req: NextRequest) {
     const limited = await rateLimit(userId, "startHourly", "startDaily");
     if (limited) return limited;
 
-    const { resumeText = "", jobDescription = "", track = "mock-interview" } = await req.json();
+    const body = await req.json();
+    const track: string = typeof body.track === "string" ? body.track : "mock-interview";
+    // Keep prompts (and AI spend) bounded: a long CV is ~6k characters, so these
+    // limits only trim pasted junk, never a real resume or job post
+    const resumeText = cleanText(body.resumeText, MAX_RESUME_CHARS);
+    const jobDescription = cleanText(body.jobDescription, MAX_JOB_DESCRIPTION_CHARS);
 
     const sessionId = uuidv4();
     let questions: string[] = [];

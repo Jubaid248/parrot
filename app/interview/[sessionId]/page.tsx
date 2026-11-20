@@ -18,7 +18,7 @@ import SystemCheck from "@/components/SystemCheck";
 import InterviewCountdown from "@/components/InterviewCountdown";
 import { useProctorShield, type ProctorViolation } from "@/components/ProctorShield";
 import { useQuestionSpeech } from "@/lib/speech/useQuestionSpeech";
-import { friendlyError, requestErrorFrom } from "@/lib/friendlyError";
+import { friendlyError, requestErrorFrom, RequestError } from "@/lib/friendlyError";
 import type { BodyLanguageMetrics, BodyLanguageAnalyzer } from "@/lib/bodyLanguage/BodyLanguageAnalyzer";
 
 interface FrameworkStepItem {
@@ -158,6 +158,7 @@ export default function InterviewPage() {
     audioEnabled,
     setAudioEnabled,
     isSpeaking,
+    spokenWordIndex,
     speak,
     stop,
   } = useQuestionSpeech();
@@ -277,7 +278,8 @@ export default function InterviewPage() {
             data.session.questions[data.session.currentQuestionIndex],
           isFollowUp: data.session.awaitingFollowUp || false,
           lastTranscript: null,
-          isComplete: false,
+          // Every question answered but the report not generated yet
+          isComplete: data.session.currentQuestionIndex >= data.session.questions.length,
           isProcessing: false,
         });
 
@@ -464,6 +466,13 @@ export default function InterviewPage() {
           setSessionStage("practice");
         }
       } catch (err) {
+        // The server already moved past this question (e.g. an earlier send went through
+        // but its reply was lost): reload to pick up where the session really is
+        if (err instanceof RequestError && err.status === 409) {
+          pendingAnswerRef.current = null;
+          window.location.reload();
+          return;
+        }
         setAnswerError(friendlyError("answer", err));
         setState((prev) => ({ ...prev, isProcessing: false }));
       } finally {
@@ -502,7 +511,7 @@ export default function InterviewPage() {
         sessionId,
         audioBase64,
         audioDuration: duration,
-        questionText: state.currentQuestion,
+        questionIndex: state.currentQuestionIndex,
         isFollowUp: state.isFollowUp,
         liveText,
         eyeContactPercent: blMetrics?.eyeContactPercent ?? null,
@@ -510,7 +519,7 @@ export default function InterviewPage() {
         bodyLanguage: blMetrics?.details ?? null,
       });
     },
-    [sessionId, state.currentQuestion, state.isFollowUp, state.isProcessing, state.isComplete, stop, cameraActive, sendAnswer]
+    [sessionId, state.currentQuestionIndex, state.isFollowUp, state.isProcessing, state.isComplete, stop, cameraActive, sendAnswer]
   );
 
   const retryAnswer = useCallback(() => {
@@ -864,9 +873,13 @@ export default function InterviewPage() {
         </div>
   );
 
-  // The question and its extras, centered under Tota
-  const QuestionBody = (
-    <div className="space-y-4">
+  // Context above the stage (debate motion, negotiation brief, small talk scene)
+  const hasStageBefore =
+    (isDebate && !!currentQuestionDetail?.motion) ||
+    (isNegotiation && !!currentQuestionDetail?.yourGoal) ||
+    (isCommBuilder && !!currentQuestionDetail?.setting && !state.isFollowUp);
+  const StageBefore = hasStageBefore ? (
+    <div className="space-y-3">
       {/* Debate motion and assigned side */}
       {isDebate && currentQuestionDetail?.motion && (
         <div className="rounded-2xl border border-line bg-paper/70 p-3.5 flex flex-wrap items-center justify-center gap-2">
@@ -908,40 +921,40 @@ export default function InterviewPage() {
           {currentQuestionDetail.setting}
         </p>
       )}
+    </div>
+  ) : null;
 
-      {/* Tota's greeting before the first mock interview question */}
-      {state.track === "mock-interview" && state.currentQuestionIndex === 0 && !state.isFollowUp && currentQuestionDetail?.spokenPrefix && (
-        <p className="mx-auto max-w-xl text-sm text-stone-muted leading-relaxed">{currentQuestionDetail.spokenPrefix}</p>
-      )}
+  // What Tota says before the question (a greeting) is spoken too, so it streams into the bubble first
+  const stageLead = !state.isFollowUp ? currentQuestionDetail?.spokenPrefix : undefined;
+  const stageQuestion = isIeltsPart2 ? state.currentQuestion.split("\n")[0] : state.currentQuestion;
 
-      {/* Main Question Text */}
-      <div className="space-y-3">
-        <h2 className="font-serif font-normal text-2xl sm:text-[2rem] text-ink leading-snug">
-          {isIeltsPart2 ? state.currentQuestion.split("\n")[0] : state.currentQuestion}
-        </h2>
-
-        {/* IELTS Part 2 Bullet Points */}
-        {isIeltsPart2 && ieltsPart2Bullets.length > 0 && (
-          <div className="mx-auto max-w-xl space-y-2 pt-3 border-t border-tealbird/20 text-left">
-            <p className="text-[11px] font-semibold text-tealbird-deep uppercase tracking-widest">
-              You should say:
-            </p>
-            <div className="grid grid-cols-1 gap-2">
-              {ieltsPart2Bullets.map((bp: string, i: number) => (
-                <div
-                  key={i}
-                  className="flex items-start gap-2.5 p-2.5 rounded-xl bg-paper/70 border border-line text-xs text-ink"
-                >
-                  <span className="w-5 h-5 rounded bg-tealbird/20 text-tealbird-deep text-[11px] font-bold flex items-center justify-center shrink-0">
-                    {i + 1}
-                  </span>
-                  <span className="leading-snug">{bp}</span>
-                </div>
-              ))}
-            </div>
+  // Extras under the speech bubble (cue card bullets, framework hint)
+  const hasStageExtras =
+    (isIeltsPart2 && ieltsPart2Bullets.length > 0) ||
+    ((isCommBuilder || isDebate || isNegotiation) && !!currentQuestionDetail?.frameworkSteps && !state.isFollowUp);
+  const StageExtras = hasStageExtras ? (
+    <div className="space-y-4">
+      {/* IELTS Part 2 Bullet Points */}
+      {isIeltsPart2 && ieltsPart2Bullets.length > 0 && (
+        <div className="mx-auto max-w-xl space-y-2 pt-3 border-t border-tealbird/20 text-left">
+          <p className="text-[11px] font-semibold text-tealbird-deep uppercase tracking-widest">
+            You should say:
+          </p>
+          <div className="grid grid-cols-1 gap-2">
+            {ieltsPart2Bullets.map((bp: string, i: number) => (
+              <div
+                key={i}
+                className="flex items-start gap-2.5 p-2.5 rounded-xl bg-paper/70 border border-line text-xs text-ink"
+              >
+                <span className="w-5 h-5 rounded bg-tealbird/20 text-tealbird-deep text-[11px] font-bold flex items-center justify-center shrink-0">
+                  {i + 1}
+                </span>
+                <span className="leading-snug">{bp}</span>
+              </div>
+            ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Communication Framework Hint (STAR, CAR, SEE) */}
       {(isCommBuilder || isDebate || isNegotiation) && currentQuestionDetail?.frameworkSteps && !state.isFollowUp && (() => {
@@ -979,7 +992,7 @@ export default function InterviewPage() {
         );
       })()}
     </div>
-  );
+  ) : null;
 
   // Common Recorder Hub component (Preserves AudioRecorder mount to prevent unmount ghost audio)
   const RecorderHubContent = (
@@ -1128,6 +1141,10 @@ export default function InterviewPage() {
     <div className="mx-auto w-full max-w-6xl space-y-5 px-4 py-5">
       <InterviewStage
         isSpeaking={isSpeaking}
+        spokenWordIndex={spokenWordIndex}
+        lead={stageLead}
+        question={stageQuestion}
+        before={StageBefore}
         isListening={isCurrentlyRecording}
         isProcessing={state.isProcessing}
         label={QuestionLabel}
@@ -1141,7 +1158,7 @@ export default function InterviewPage() {
           />
         }
       >
-        {QuestionBody}
+        {StageExtras}
       </InterviewStage>
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-5">

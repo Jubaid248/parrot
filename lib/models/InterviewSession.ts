@@ -12,13 +12,15 @@ export interface IInterviewSession extends Document {
   status: "in_progress" | "completed";
   currentQuestionIndex: number;
   awaitingFollowUp: boolean;
+  /** Set while an answer for the current turn is being processed (see lockTurn in lib/store). */
+  turnLockedAt?: Date | null;
   createdAt: Date;
 }
 
 const InterviewSessionSchema = new Schema<IInterviewSession>(
   {
     sessionId: { type: String, required: true, unique: true, index: true },
-    // Clerk user id of the owner; only they can read the session and its report
+    // Google account id of the owner (Auth.js token.sub); only they can read the session and its report
     userId: { type: String, required: true, index: true },
     jobDescription: { type: String, required: true },
     resumeText: { type: String, required: true },
@@ -32,6 +34,7 @@ const InterviewSessionSchema = new Schema<IInterviewSession>(
     },
     currentQuestionIndex: { type: Number, default: 0 },
     awaitingFollowUp: { type: Boolean, default: false },
+    turnLockedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

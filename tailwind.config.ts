@@ -22,6 +22,7 @@ const config: Config = {
       },
       fontFamily: {
         serif: ["var(--font-serif)"],
+        hand: ["var(--font-hand)", "cursive"],
       },
     },
   },

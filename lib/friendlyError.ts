@@ -74,6 +74,9 @@ export function friendlyError(context: ErrorContext, err: unknown): string {
 
   if (status === 404 && NOT_FOUND[context]) return NOT_FOUND[context] as string;
   if (status === 401) return "Your sign-in has expired. Sign in again to continue.";
+  if (status === 423 && context === "answer") {
+    return "Your last answer is still being processed. Wait a moment, then send again.";
+  }
   // The rate limiter's message already says how long to wait
   if (status === 429) return raw || "You've reached the practice limit for now. Try again later.";
 
@@ -81,6 +84,7 @@ export function friendlyError(context: ErrorContext, err: unknown): string {
     if (/extract readable text|no text|scanned/i.test(raw)) {
       return "We couldn't read text from that file. If it's a scanned PDF, paste your resume as text instead.";
     }
+    if (status === 413) return "That file is too large. Upload a resume under 2 MB.";
     if (status === 400 && /file/i.test(raw)) return "Upload a PDF, TXT or Markdown file.";
   }
 
