@@ -36,21 +36,22 @@ export function relevanceOutOf10(score: number): number {
   return score > 10 ? Math.round(score / 10) : Math.round(score);
 }
 
+/** A short readable name for a question: its IELTS part, method, round or interview stage. */
+export function getPromptLabel(questionNumber: number, track?: string, detail?: FeedbackCardProps["detail"]): string | null {
+  if (track === "ielts-speaking") return getIeltsPartLabel(questionNumber, detail);
+  if ((track === "debate-practice" || track === "negotiation-practice") && detail?.framework) return detail.framework;
+  if (track === "communication-builder" && detail?.framework) return FRAMEWORK_LABELS[detail.framework] || `${detail.framework} method`;
+  if (track === "mock-interview" && detail?.stage) return detail.stage;
+  return null;
+}
+
 /** One compact, expandable row per question: status and a one-line fix up front, everything else on click. */
 export default function FeedbackCard({ feedback, questionNumber, track, detail }: FeedbackCardProps) {
   const isIelts = track === "ielts-speaking";
   const relevance10 = relevanceOutOf10(feedback.relevanceScore);
   const overallBand = typeof feedback.overallBand === "number" ? feedback.overallBand : null;
 
-  const promptLabel = isIelts
-    ? getIeltsPartLabel(questionNumber, detail)
-    : (track === "debate-practice" || track === "negotiation-practice") && detail?.framework
-    ? detail.framework
-    : track === "communication-builder" && detail?.framework
-    ? FRAMEWORK_LABELS[detail.framework] || `${detail.framework} method`
-    : track === "mock-interview" && detail?.stage
-    ? detail.stage
-    : null;
+  const promptLabel = getPromptLabel(questionNumber, track, detail);
 
   // IELTS rows are judged by band; everything else by relevance
   const good = isIelts ? (overallBand ?? 0) >= 6.5 : relevance10 >= 7;

@@ -1,10 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import Image from "next/image";
 import { useRouter, useParams } from "next/navigation";
-import FeedbackCard, { relevanceOutOf10 } from "@/components/FeedbackCard";
-import { BodyLanguageReportCard } from "@/components/BodyLanguageReport";
+import { getPromptLabel, relevanceOutOf10 } from "@/components/FeedbackCard";
+import { BodyLanguageAnswerPanel, BodyLanguageReportCard } from "@/components/BodyLanguageReport";
+import { Board, ScoreRing, FillerTally, PaceRuler, AnswerPath, Sticky, StarChain, MarkedTranscript, EyeDoodles } from "@/components/report/Whiteboard";
+import { MARKER, markerFor, RoughBox } from "@/components/report/rough";
+import { handFont } from "@/components/report/fonts";
 import { friendlyError, requestErrorFrom } from "@/lib/friendlyError";
 import { IPerAnswerFeedback } from "@/lib/models/FeedbackReport";
 
@@ -41,7 +45,22 @@ interface ReportData {
   } | null;
 }
 
-type Tab = "overview" | "questions" | "body";
+const IELTS_CRITERIA = [
+  { label: "Fluency", key: "fluencyCoherence" },
+  { label: "Vocabulary", key: "lexicalResource" },
+  { label: "Grammar", key: "grammaticalRange" },
+  { label: "Pronunciation", key: "pronunciation" },
+] as const;
+
+/** One decimal place, without a trailing ".0". */
+const tidy = (n: number) => Math.round(n * 10) / 10;
+
+function scoreCaption(ratio: number) {
+  if (ratio >= 0.8) return "Strong all round.";
+  if (ratio >= 0.65) return "Solid, with a few gaps to close.";
+  if (ratio >= 0.5) return "Getting there. Some answers need work.";
+  return "Plenty to work on. Keep practising.";
+}
 
 export default function ReportPage() {
   const router = useRouter();
@@ -51,7 +70,8 @@ export default function ReportPage() {
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<Tab>("overview");
+  const [selected, setSelected] = useState<number | null>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const fetchReport = async () => {
@@ -126,39 +146,18 @@ export default function ReportPage() {
   }
 
   const { report, answers } = data;
-  const isIelts = data.session.track === "ielts-speaking";
-  const isDebate = data.session.track === "debate-practice";
-  const isCommBuilder = data.session.track === "communication-builder";
-  const isNegotiation = data.session.track === "negotiation-practice";
+  const track = data.session.track;
+  const isIelts = track === "ielts-speaking";
+  const isDebate = track === "debate-practice";
+  const isCommBuilder = track === "communication-builder";
+  const isNegotiation = track === "negotiation-practice";
+  const details = data.session.questionDetails || [];
 
-  const hasBodyLanguage =
-    !!report && (!!report.bodyLanguageReport || typeof report.avgEyeContactPercent === "number" || !!report.overallMovementScore);
-  const context = isDebate
-    ? data.session.questionDetails?.[0]?.motion
-    : isNegotiation
-    ? data.session.questionDetails?.[0]?.scenarioTitle
-    : null;
+  const context = isDebate ? details[0]?.motion : isNegotiation ? details[0]?.scenarioTitle : null;
+  const unit = isIelts ? "prompt" : isDebate || isNegotiation ? "round" : "question";
 
-  // The weakest answers' "what to improve" notes make the short to-do list on the overview
-  const workOnNext = report
-    ? [...report.perAnswerFeedback]
-        .sort((a, b) =>
-          isIelts ? (a.overallBand ?? 0) - (b.overallBand ?? 0) : relevanceOutOf10(a.relevanceScore) - relevanceOutOf10(b.relevanceScore)
-        )
-        .map((fb) => fb.whatToImprove)
-        .filter((s): s is string => !!s)
-        .slice(0, 3)
-    : [];
-
-  const tabs: { id: Tab; label: string }[] = [
-    { id: "overview", label: "Overview" },
-    { id: "questions", label: `${isIelts ? "Prompts" : "Questions"} (${report?.perAnswerFeedback.length || answers.length})` },
-    ...(hasBodyLanguage ? [{ id: "body" as Tab, label: "Body language" }] : []),
-  ];
-
-  return (
-    <div className="max-w-3xl mx-auto space-y-8 px-4 sm:px-6 pt-10 sm:pt-14 pb-16">
-      {/* Top Navigation Bar */}
+  const header = (
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
         <button
           onClick={() => router.push("/mock-interview")}
@@ -166,184 +165,30 @@ export default function ReportPage() {
         >
           ← Start a new interview
         </button>
-        <span className="text-xs font-mono text-stone-soft">
-          Session ID: {sessionId.slice(0, 8)}
-        </span>
+        <span className="text-xs text-stone-soft">Session {sessionId.slice(0, 8)}</span>
       </div>
+      <h1 className="font-serif font-normal text-5xl sm:text-6xl leading-[1.02] text-ink pt-4">
+        {isIelts
+          ? "Your speaking, scored."
+          : isDebate
+          ? "How your case held up."
+          : isNegotiation
+          ? "How your deal came together."
+          : isCommBuilder
+          ? "How you came across."
+          : "Here’s how you did."}
+      </h1>
+      <p className="text-[15px] text-stone-muted leading-relaxed max-w-[60ch]">
+        {context || `The big picture first, then every ${unit} broken down underneath.`}
+      </p>
+    </div>
+  );
 
-      {/* Title Header */}
-      <div className="space-y-3">
-        <p className="text-xs font-mono uppercase tracking-[0.14em] text-moss">
-          {isIelts
-            ? "IELTS speaking report"
-            : isDebate
-            ? "Debate report"
-            : isNegotiation
-            ? "Negotiation report"
-            : isCommBuilder
-            ? "Communication report"
-            : "Interview report"}
-        </p>
-        <h1 className="font-serif font-normal text-5xl sm:text-6xl leading-[1.02] text-ink">
-          {isIelts ? (
-            <>Your speaking, <span className="italic text-moss">scored.</span></>
-          ) : isDebate ? (
-            <>How your case <span className="italic text-moss">held up.</span></>
-          ) : isNegotiation ? (
-            <>How your deal <span className="italic text-moss">came together.</span></>
-          ) : (
-            <>Here&rsquo;s how <span className="italic text-moss">you did.</span></>
-          )}
-        </h1>
-        {context && <p className="text-base text-stone-muted leading-relaxed">{context}</p>}
-      </div>
-
-      {report ? (
-        <div className="space-y-6">
-          <div role="tablist" className="flex gap-6 border-b border-line">
-            {tabs.map((t) => (
-              <button
-                key={t.id}
-                role="tab"
-                aria-selected={tab === t.id}
-                onClick={() => setTab(t.id)}
-                className={`-mb-px whitespace-nowrap border-b-2 pb-2.5 text-sm font-semibold transition-colors ${
-                  tab === t.id ? "border-ink text-ink" : "border-transparent text-stone-muted hover:text-ink"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          {tab === "overview" && (
-            <div className="space-y-6">
-              {report.overallSummary && (
-                <p className="font-serif text-xl sm:text-2xl text-ink leading-snug">{report.overallSummary}</p>
-              )}
-
-              {isIelts && (
-                <div className="glass-card rounded-3xl p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-5">
-                  <div className="flex items-center gap-4">
-                    <span
-                      className={`font-serif text-6xl leading-none ${
-                        report.overallBand && report.overallBand >= 6.5
-                          ? "text-moss"
-                          : report.overallBand && report.overallBand >= 5.5
-                          ? "text-amber-800"
-                          : "text-beak-deep"
-                      }`}
-                    >
-                      {report.overallBand ?? "—"}
-                    </span>
-                    <div>
-                      <p className="text-sm font-semibold text-ink">Estimated band</p>
-                      <p className="text-xs text-amber-800">Practice estimate, not an official IELTS score</p>
-                    </div>
-                  </div>
-                  <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-2 sm:border-l sm:border-line sm:pl-5">
-                    {[
-                      { label: "Fluency", key: "fluencyCoherence" },
-                      { label: "Vocabulary", key: "lexicalResource" },
-                      { label: "Grammar", key: "grammaticalRange" },
-                      { label: "Pronunciation", key: "pronunciation" },
-                    ].map(({ label, key }) => {
-                      const vals = report.perAnswerFeedback.map((f: any) => f[key]).filter((v: any) => typeof v === "number");
-                      const avg = vals.length > 0 ? Math.round((vals.reduce((a: number, b: number) => a + b, 0) / vals.length) * 2) / 2 : null;
-                      return (
-                        <div key={key}>
-                          <p className="text-[11px] text-stone-muted">{label}</p>
-                          <p className="font-serif text-2xl text-ink">{avg ?? "—"}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              <div className={`grid gap-3 ${isIelts ? "grid-cols-2" : "grid-cols-3"}`}>
-                <Stat
-                  label="Filler words"
-                  value={String(report.totalFillerWordCount)}
-                  color={report.totalFillerWordCount > 10 ? "text-beak-deep" : report.totalFillerWordCount > 5 ? "text-amber-800" : "text-ink"}
-                />
-                <Stat label="Pace" value={report.avgPace > 0 ? `${report.avgPace} WPM` : "N/A"} hint="aim for 120–160" />
-                {!isIelts && <Stat label="Answered" value={`${answers.length} / ${data.session.questions.length}`} />}
-              </div>
-
-              {workOnNext.length > 0 && (
-                <div className="space-y-2">
-                  <h2 className="text-sm font-semibold text-ink">Work on next</h2>
-                  <ul className="space-y-2">
-                    {workOnNext.map((item, i) => (
-                      <li key={i} className="flex gap-2 text-sm text-ink/80 leading-relaxed">
-                        <span className="shrink-0 font-bold text-moss">→</span>
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <button onClick={() => setTab("questions")} className="text-sm font-semibold text-moss hover:text-moss-deep">
-                    See each {isIelts ? "prompt" : "question"} →
-                  </button>
-                </div>
-              )}
-
-              {!hasBodyLanguage && (
-                <p className="rounded-2xl border border-dashed border-line bg-paper/60 p-4 text-sm text-stone-muted">
-                  Turn on your camera next time to get feedback on eye contact, posture and body language.
-                </p>
-              )}
-            </div>
-          )}
-
-          {tab === "questions" && (
-            <div className="glass-card rounded-3xl px-5 sm:px-6">
-              {report.perAnswerFeedback.map((fb, idx) => (
-                <FeedbackCard
-                  key={idx}
-                  feedback={fb}
-                  questionNumber={idx + 1}
-                  track={data.session.track}
-                  detail={data.session.questionDetails?.[idx]}
-                />
-              ))}
-            </div>
-          )}
-
-          {tab === "body" &&
-            (report.bodyLanguageReport ? (
-              <BodyLanguageReportCard
-                report={report.bodyLanguageReport}
-                perQuestion={report.perAnswerFeedback
-                  .map((fb: any, i: number) => ({
-                    q: i + 1,
-                    // Mock interviews label by stage; scripted tracks have a readable round or method name
-                    label:
-                      (data.session.track === "mock-interview"
-                        ? data.session.questionDetails?.[i]?.stage
-                        : data.session.questionDetails?.[i]?.framework || data.session.questionDetails?.[i]?.topic) || undefined,
-                    data: fb.bodyLanguage,
-                  }))
-                  .filter((row: any) => row.data)}
-              />
-            ) : (
-              // Older sessions only stored average eye contact and head movement
-              <div className="grid grid-cols-2 gap-3">
-                {typeof report.avgEyeContactPercent === "number" && (
-                  <Stat
-                    label="Eye contact"
-                    value={`${report.avgEyeContactPercent}%`}
-                    color={report.avgEyeContactPercent >= 70 ? "text-moss" : report.avgEyeContactPercent >= 50 ? "text-amber-800" : "text-beak-deep"}
-                  />
-                )}
-                {report.overallMovementScore && (
-                  <Stat label="Head movement" value={report.overallMovementScore} color={report.overallMovementScore === "high" ? "text-amber-800" : "text-ink"} />
-                )}
-              </div>
-            ))}
-        </div>
-      ) : (
-        // Feedback isn't ready yet, so just show what was said
+  if (!report) {
+    // Feedback isn't ready yet, so just show what was said
+    return (
+      <div className="max-w-3xl mx-auto space-y-8 px-4 sm:px-6 pt-10 sm:pt-14 pb-16">
+        {header}
         <div className="glass-card rounded-3xl px-5 sm:px-6">
           {answers.map((answer, idx) => (
             <div key={idx} className="space-y-2 border-t border-line py-4 first:border-t-0">
@@ -357,7 +202,312 @@ export default function ReportPage() {
             </div>
           ))}
         </div>
+      </div>
+    );
+  }
+
+  const feedback = report.perAnswerFeedback;
+  const maxScore = isIelts ? 9 : 10;
+  const answerScore = (fb: IPerAnswerFeedback): number | null =>
+    isIelts ? (typeof fb.overallBand === "number" ? fb.overallBand : null) : relevanceOutOf10(fb.relevanceScore);
+  const scored = feedback.map(answerScore).filter((s): s is number => s !== null);
+  const overall = isIelts
+    ? report.overallBand ?? (scored.length ? Math.round((scored.reduce((a, b) => a + b, 0) / scored.length) * 2) / 2 : null)
+    : scored.length
+    ? tidy(scored.reduce((a, b) => a + b, 0) / scored.length)
+    : null;
+
+  // Strongest answers' "what worked" and weakest answers' "what to improve" become the sticky notes
+  const byScore = feedback.map((fb, i) => ({ fb, i, s: answerScore(fb) ?? 0 }));
+  const keepDoing = [...byScore].sort((a, b) => b.s - a.s).map((x) => x.fb.whatWorked).filter((s): s is string => !!s).slice(0, 3);
+  const workOnNext = [...byScore].sort((a, b) => a.s - b.s).map((x) => x.fb.whatToImprove).filter((s): s is string => !!s).slice(0, 3);
+
+  const labelFor = (i: number) => {
+    const raw = getPromptLabel(i + 1, track, details[i]);
+    // IELTS labels carry the topic too; the path only has room for the part
+    return isIelts && raw ? raw.split(" · ").slice(0, 2).join(" · ") : raw || undefined;
+  };
+  const eyeFor = (fb: any): number | null =>
+    typeof fb.bodyLanguage?.stats?.eyeContactPercent === "number"
+      ? fb.bodyLanguage.stats.eyeContactPercent
+      : typeof fb.eyeContactPercent === "number"
+      ? fb.eyeContactPercent
+      : null;
+  const eyeRows = feedback.map((fb, i) => ({ q: i + 1, label: labelFor(i), percent: eyeFor(fb) })).filter((r): r is { q: number; label: string | undefined; percent: number } => r.percent !== null);
+  const hasBodyLanguage = !!report.bodyLanguageReport || typeof report.avgEyeContactPercent === "number" || !!report.overallMovementScore;
+
+  // Open the weakest answer first: that's where the most useful feedback is
+  const weakest = [...byScore].sort((a, b) => a.s - b.s)[0]?.i ?? 0;
+  const current = selected ?? weakest;
+  const fb = feedback[current];
+  const score = fb ? answerScore(fb) : null;
+  const eye = fb ? eyeFor(fb) : null;
+  const star = fb?.starAnalysis;
+  const showStar = !isIelts && !!star && Object.values(star).some((v) => typeof v === "string" && v.trim());
+
+  const choose = (i: number) => {
+    setSelected(i);
+    requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+
+  return (
+    <div className={`${handFont.variable} max-w-5xl mx-auto space-y-8 px-4 sm:px-6 pt-10 sm:pt-14 pb-16`}>
+      {header}
+
+      {/* Board 1: the big picture */}
+      <Board>
+        <div className="grid grid-cols-1 items-start gap-8 md:grid-cols-[220px_1fr] lg:grid-cols-[220px_1fr_250px]">
+          {overall !== null ? (
+            <div>
+              <ScoreRing value={overall} max={maxScore} caption={isIelts ? "Estimated band" : scoreCaption(overall / maxScore)} />
+              {isIelts && <p className="mt-1 text-center text-xs text-amber-800">Practice estimate, not an official IELTS score</p>}
+            </div>
+          ) : (
+            <div />
+          )}
+
+          {report.overallSummary ? (
+            <div className="flex items-start gap-3.5">
+              <Image
+                src="/totapakhi-perched-parrot.png"
+                alt=""
+                width={58}
+                height={58}
+                className="mt-1 h-[58px] w-[58px] shrink-0 rounded-full object-cover shadow-[0_0_0_3px_#FDFCF8,0_0_0_5px_#2E9F9C]"
+              />
+              <RoughBox tail className="flex-1" options={{ stroke: MARKER.teal, strokeWidth: 2, roughness: 1.4 }} delay={300}>
+                <div className="px-[18px] py-4">
+                  <p className="mb-1.5 font-hand text-[22px] font-bold leading-none text-tealbird">Tota says</p>
+                  <p className="text-[15.5px] leading-relaxed text-ink">{report.overallSummary}</p>
+                </div>
+              </RoughBox>
+            </div>
+          ) : (
+            <div />
+          )}
+
+          <div className="grid gap-6 sm:grid-cols-2 md:col-span-2 lg:col-span-1 lg:grid-cols-1">
+            <div>
+              <p className="font-hand text-2xl font-bold leading-none text-ink">Filler words: {report.totalFillerWordCount}</p>
+              {report.totalFillerWordCount > 0 && <FillerTally count={report.totalFillerWordCount} />}
+              <p className="mt-0.5 text-[12.5px] text-stone-muted">
+                {report.totalFillerWordCount <= 5 ? "Nicely clean. Under 6 sounds confident." : "Words like “um” and “like”. Under 6 sounds confident."}
+              </p>
+            </div>
+            {report.avgPace > 0 && (
+              <div>
+                <p className="font-hand text-2xl font-bold leading-none text-ink">Pace: {report.avgPace} wpm</p>
+                <PaceRuler wpm={report.avgPace} />
+                <p className="text-[12.5px] text-stone-muted">
+                  {report.avgPace > 160 ? "A little fast." : report.avgPace < 120 ? "A little slow." : "Right in the zone."} The green zone is 120 to 160.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {isIelts && (
+          <div className="mt-8 flex flex-wrap justify-center gap-x-10 gap-y-3">
+            {IELTS_CRITERIA.map(({ label, key }) => {
+              const vals = feedback.map((f: any) => f[key]).filter((v: any) => typeof v === "number");
+              const avg = vals.length ? Math.round((vals.reduce((a: number, b: number) => a + b, 0) / vals.length) * 2) / 2 : null;
+              return (
+                <div key={key} className="text-center">
+                  <b className="block font-hand text-3xl leading-none" style={{ color: avg === null ? MARKER.faint : markerFor(avg / 9) }}>
+                    {avg ?? "–"}
+                  </b>
+                  <span className="text-xs text-stone-muted">{label}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <h2 className="mt-9 font-hand text-[32px] font-bold leading-none text-ink">
+          {isIelts ? "Prompt by prompt" : isDebate || isNegotiation ? "Round by round" : "The interview, start to finish"}
+        </h2>
+        <p className="mb-5 mt-1.5 text-[13.5px] text-stone-muted">
+          Each circle is one {unit}. Fuller circles scored higher. Pick one to open it below.
+        </p>
+        <AnswerPath
+          stops={feedback.map((f, i) => ({ label: labelFor(i) || `${unit[0].toUpperCase()}${unit.slice(1)} ${i + 1}`, question: f.questionText, score: answerScore(f), max: maxScore }))}
+          selected={current}
+          onSelect={choose}
+        />
+
+        {(keepDoing.length > 0 || workOnNext.length > 0) && (
+          <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2">
+            {keepDoing.length > 0 && <Sticky title="Keep doing" items={keepDoing} tone="mint" />}
+            {workOnNext.length > 0 && <Sticky title="Work on next" items={workOnNext} tone="yellow" />}
+          </div>
+        )}
+
+        {!hasBodyLanguage && (
+          <p className="mt-8 rounded-2xl border border-dashed border-line bg-white/50 p-4 text-sm text-stone-muted">
+            Turn on your camera next time to get feedback on eye contact, posture and body language.
+          </p>
+        )}
+      </Board>
+
+      {/* Board 2: one answer at a time */}
+      {fb && (
+        <div ref={detailRef} className="scroll-mt-24">
+          <Board>
+            <div className="flex flex-wrap items-start justify-between gap-5">
+              <div className="min-w-0 flex-1">
+                <p className="font-hand text-2xl leading-none text-tealbird">
+                  {`${unit[0].toUpperCase()}${unit.slice(1)} ${current + 1}`}
+                  {labelFor(current) ? ` · ${labelFor(current)}` : ""}
+                </p>
+                <h2 className="mt-1.5 max-w-[32ch] font-serif text-[26px] leading-tight text-ink sm:text-[34px]">{fb.questionText}</h2>
+              </div>
+              <div className="flex flex-wrap gap-5 pt-1.5">
+                {[
+                  score !== null && { v: isIelts ? `Band ${score}` : `${score}/10`, l: isIelts ? "Band" : "Answer score", c: markerFor(score / maxScore) },
+                  fb.speakingPace > 0 && { v: String(fb.speakingPace), l: "Words / min", c: fb.speakingPace > 160 || fb.speakingPace < 120 ? MARKER.beak : MARKER.ink },
+                  { v: String(fb.fillerWordCount), l: "Filler words", c: fb.fillerWordCount > 3 ? MARKER.beak : MARKER.ink },
+                  eye !== null && { v: `${eye}%`, l: "Eye contact", c: eye >= 70 ? MARKER.moss : eye >= 55 ? MARKER.amber : MARKER.beak },
+                ]
+                  .filter((x): x is { v: string; l: string; c: string } => !!x)
+                  .map((chip, i) => (
+                    <RoughBox key={chip.l} animateKey={current} delay={i * 80} options={{ stroke: MARKER.ink, strokeWidth: 1.4, roughness: 1.6, seed: 50 + i }}>
+                      <div className="min-w-[88px] px-3 py-1.5 text-center">
+                        <b className="block font-hand text-[28px] leading-none" style={{ color: chip.c }}>
+                          {chip.v}
+                        </b>
+                        <span className="text-xs text-stone-muted">{chip.l}</span>
+                      </div>
+                    </RoughBox>
+                  ))}
+              </div>
+            </div>
+
+            {(fb.whatWorked || fb.whatToImprove) && (
+              <div className="mt-6 grid grid-cols-1 gap-3 text-sm leading-relaxed sm:grid-cols-2 sm:gap-8">
+                {fb.whatWorked && (
+                  <p>
+                    <span className="font-hand text-xl font-bold text-moss">Worked: </span>
+                    {fb.whatWorked}
+                  </p>
+                )}
+                {fb.whatToImprove && (
+                  <p>
+                    <span className="font-hand text-xl font-bold text-beak-deep">Fix: </span>
+                    {fb.whatToImprove}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {isIelts && (
+              <div className="mt-6 flex flex-wrap gap-x-8 gap-y-2 text-sm text-stone-muted">
+                {IELTS_CRITERIA.map(({ label, key }) => (
+                  <span key={key}>
+                    {label} <b className="font-hand text-2xl text-ink">{typeof (fb as any)[key] === "number" ? (fb as any)[key] : "–"}</b>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {showStar && star && <StarChain star={star} animateKey={current} />}
+
+            <div className={`${showStar ? "mt-16" : "mt-10"} grid grid-cols-1 gap-9 lg:grid-cols-[1.15fr_1fr]`}>
+              <div>
+                <p className="mb-2.5 flex items-baseline gap-2.5 font-hand text-[26px] font-bold leading-none text-ink">
+                  What you said
+                  <small className="font-sans text-[12.5px] font-normal text-stone-muted">
+                    {fb.fillerWords?.length ? `${fb.fillerWords.length} filler word${fb.fillerWords.length > 1 ? "s" : ""} circled` : "no filler words"}
+                  </small>
+                </p>
+                <MarkedTranscript key={current} text={fb.answerTranscript} fillerWords={fb.fillerWords} animateKey={current} />
+                {fb.followUpText && (
+                  <div className="mt-6 border-l-[3px] border-line pl-4 text-sm leading-relaxed text-stone-muted">
+                    <span className="font-semibold text-ink">Follow-up:</span> {fb.followUpText}
+                    {fb.followUpTranscript && <span className="mt-1 block text-ink/80">{fb.followUpTranscript}</span>}
+                  </div>
+                )}
+              </div>
+              {fb.rewrittenExample && (
+                <div>
+                  <p className="mb-2.5 font-hand text-[26px] font-bold leading-none text-ink">{isIelts ? "A band 8+ version" : "A stronger version"}</p>
+                  <div className="relative rotate-[.6deg] bg-white px-5 pb-[22px] pt-5 shadow-[0_14px_20px_-16px_rgba(23,34,26,.4)]">
+                    <span aria-hidden="true" className="absolute -top-2.5 left-[18px] h-5 w-16 -rotate-6 bg-tealbird/20" />
+                    <span aria-hidden="true" className="absolute -top-2.5 right-[18px] h-5 w-16 rotate-[5deg] bg-tealbird/20" />
+                    <p className="text-[15px] leading-relaxed text-ink">{fb.rewrittenExample}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {(fb as any).bodyLanguage && (
+              <div className="mt-10">
+                <p className="mb-3 font-hand text-[26px] font-bold leading-none text-ink">On camera for this {unit}</p>
+                <BodyLanguageAnswerPanel data={(fb as any).bodyLanguage} />
+              </div>
+            )}
+
+            {eyeRows.length > 1 && (
+              <div className="mt-10">
+                <p className="font-hand text-[32px] font-bold leading-none text-ink">Eye contact by {unit}</p>
+                <p className="mb-4 mt-1.5 text-[13.5px] text-stone-muted">How much of each {unit} you spent looking at the camera. Aim for 70% or more.</p>
+                <EyeDoodles rows={eyeRows} selected={current} />
+              </div>
+            )}
+
+            <div className="mt-10 flex justify-between gap-3 text-sm font-semibold">
+              <button
+                disabled={current === 0}
+                onClick={() => choose(current - 1)}
+                className="rounded-xl px-4 py-2.5 text-moss hover:bg-moss/10 disabled:invisible"
+              >
+                ← Previous {unit}
+              </button>
+              <button
+                disabled={current === feedback.length - 1}
+                onClick={() => choose(current + 1)}
+                className="rounded-xl px-4 py-2.5 text-moss hover:bg-moss/10 disabled:invisible"
+              >
+                Next {unit} →
+              </button>
+            </div>
+          </Board>
+        </div>
       )}
+
+      {/* Full camera breakdown stays as its own card under the boards */}
+      {report.bodyLanguageReport ? (
+        <BodyLanguageReportCard
+          report={report.bodyLanguageReport}
+          perQuestion={feedback
+            .map((f: any, i: number) => ({ q: i + 1, label: labelFor(i), data: f.bodyLanguage }))
+            .filter((row: any) => row.data)}
+        />
+      ) : (
+        // Older sessions only stored average eye contact and head movement
+        hasBodyLanguage && (
+          <div className="grid grid-cols-2 gap-3">
+            {typeof report.avgEyeContactPercent === "number" && (
+              <Stat
+                label="Eye contact"
+                value={`${report.avgEyeContactPercent}%`}
+                color={report.avgEyeContactPercent >= 70 ? "text-moss" : report.avgEyeContactPercent >= 50 ? "text-amber-800" : "text-beak-deep"}
+              />
+            )}
+            {report.overallMovementScore && (
+              <Stat label="Head movement" value={report.overallMovementScore} color={report.overallMovementScore === "high" ? "text-amber-800" : "text-ink"} />
+            )}
+          </div>
+        )
+      )}
+
+      <div className="flex justify-center pt-2">
+        <button
+          onClick={() => router.push("/mock-interview")}
+          className="rounded-2xl bg-moss px-6 py-3.5 text-[15px] font-semibold text-cream transition-colors hover:bg-moss-deep"
+        >
+          Practice again
+        </button>
+      </div>
     </div>
   );
 }
