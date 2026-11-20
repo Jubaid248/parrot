@@ -74,6 +74,9 @@ export function friendlyError(context: ErrorContext, err: unknown): string {
 
   if (status === 404 && NOT_FOUND[context]) return NOT_FOUND[context] as string;
   if (status === 401) return "Your sign-in has expired. Sign in again to continue.";
+  if (status === 423 && context === "answer") {
+    return "Your last answer is still being processed. Wait a moment, then send again.";
+  }
   // The rate limiter's message already says how long to wait
   if (status === 429) return raw || "You've reached the practice limit for now. Try again later.";
 

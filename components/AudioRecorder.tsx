@@ -532,12 +532,8 @@ const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>(functi
               stopRecordingRef.current();
               return;
             }
-
-            // 3. Question turn max duration: auto-submit after 60s
-            if (elapsedSec >= 60) {
-              stopRecordingRef.current();
-              return;
-            }
+            // No separate per-answer time cap here: long answers (an IELTS cue card runs
+            // up to two minutes) end on silence, or at MAX_RECORDING_SEC via the timer
           } else {
             // Case B: Candidate is thinking before starting to speak
             // Generous 90-second safety limit to prevent abandoned tabs

@@ -6,6 +6,8 @@ import {
   updateAnswerRecord,
   getAnswersForSession,
   findAnswerRecord,
+  lockTurn,
+  releaseTurn,
 } from "@/lib/store";
 import { sanitizeTally } from "@/lib/bodyLanguage/metrics";
 import { transcribeAudio } from "@/lib/ai/transcribe";
@@ -50,6 +52,8 @@ function formatHistory(answers: any[]): string {
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  // Set once this request holds the session's turn lock, so a failure can release it
+  let lockedSessionId: string | null = null;
   try {
     const user = await requireUser();
     if (!user.ok) return user.response;
@@ -128,6 +132,16 @@ export async function POST(req: NextRequest) {
       questionText = record.followUpText;
     }
 
+    // Two overlapping sends (e.g. "Send again" while the first is still waiting on the AI)
+    // would both pass the checks above; only the one that claims the turn goes ahead
+    if (!(await lockTurn(sessionId, idx, isFollowUp))) {
+      return NextResponse.json(
+        { error: "Your last answer is still being processed." },
+        { status: 423 }
+      );
+    }
+    lockedSessionId = sessionId;
+
     // Transcribe the audio (use live speech-to-text transcript if provided, with safe fallback)
     let transcript = "";
     if (typeof liveText === "string" && liveText.trim().length > 0) {
@@ -154,7 +168,11 @@ export async function POST(req: NextRequest) {
       const nextIndex = idx + 1;
 
       if (nextIndex >= totalQuestions) {
-        await updateInterviewSession(sessionId, { currentQuestionIndex: nextIndex, awaitingFollowUp: false });
+        await updateInterviewSession(sessionId, {
+          currentQuestionIndex: nextIndex,
+          awaitingFollowUp: false,
+          turnLockedAt: null,
+        });
         return NextResponse.json({
           transcript,
           isComplete: true,
@@ -166,7 +184,7 @@ export async function POST(req: NextRequest) {
       // the scripted line stays as a fallback
       let nextQuestion: string = session.questions[nextIndex];
       const nextDetail = session.questionDetails?.[nextIndex];
-      const updates: Record<string, any> = { currentQuestionIndex: nextIndex, awaitingFollowUp: false };
+      const updates: Record<string, any> = { currentQuestionIndex: nextIndex, awaitingFollowUp: false, turnLockedAt: null };
       if (nextDetail?.beat) {
         const result = await generateFollowUp(effectiveTrack, lastLineSaid, transcript, {
           detail: { ...nextDetail, followUpStyle: "negotiation-beat" },
@@ -239,7 +257,7 @@ export async function POST(req: NextRequest) {
 
     if (!followUpQuestion) return advance(questionText);
 
-    await updateInterviewSession(sessionId, { awaitingFollowUp: true });
+    await updateInterviewSession(sessionId, { awaitingFollowUp: true, turnLockedAt: null });
 
     return NextResponse.json({
       transcript,
@@ -249,6 +267,11 @@ export async function POST(req: NextRequest) {
       isFollowUp: true,
     });
   } catch (error) {
+    // Free the turn so the user can send again straight away; the lock's staleness
+    // timeout covers the case where this release fails too
+    if (lockedSessionId) {
+      await releaseTurn(lockedSessionId).catch((e) => console.error("[/api/interview/answer] Lock release failed:", e));
+    }
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error("[/api/interview/answer] Error:", error);
     return NextResponse.json(

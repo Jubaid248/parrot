@@ -4,7 +4,7 @@ import {
   updateInterviewSession,
   getAnswersForSession,
 } from "@/lib/store";
-import { generateFeedbackReport } from "@/lib/ai/llm";
+import { generateFeedbackReport, FeedbackUnavailableError } from "@/lib/ai/llm";
 import { requireUser, requireOwnedSession } from "@/lib/auth";
 import { rateLimit } from "@/lib/rateLimit";
 
@@ -55,6 +55,13 @@ export async function POST(req: NextRequest) {
       report,
     });
   } catch (error) {
+    // The session stays in progress, so the user can ask for the report again
+    if (error instanceof FeedbackUnavailableError) {
+      return NextResponse.json(
+        { error: "Feedback couldn't be generated right now. Your answers are saved, so try again in a minute." },
+        { status: 503, headers: { "Retry-After": "30" } }
+      );
+    }
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error("[/api/interview/end] Error:", error);
     return NextResponse.json(
