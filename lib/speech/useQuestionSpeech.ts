@@ -47,6 +47,9 @@ export function useQuestionSpeech() {
   const [audioEnabled, setAudioEnabledState] = useState<boolean>(true);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [supported, setSupported] = useState<boolean>(false);
+  // Index of the word being spoken right now, from the browser's word boundary events.
+  // Stays -1 when the voice doesn't report boundaries, so the UI falls back to its own pacing.
+  const [spokenWordIndex, setSpokenWordIndex] = useState<number>(-1);
 
   const selectedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
   const keepAliveTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -170,6 +173,7 @@ export function useQuestionSpeech() {
 
       // Mark as speaking synchronously to block mic before async browser TTS kicks off
       setIsSpeaking(true);
+      setSpokenWordIndex(-1);
 
       const utterance = new SpeechSynthesisUtterance(cleanText);
       currentUtteranceRef.current = utterance;
@@ -219,6 +223,12 @@ export function useQuestionSpeech() {
         }, 90000);
       };
 
+      utterance.onboundary = (e) => {
+        if (e.name && e.name !== "word") return;
+        const before = cleanText.slice(0, e.charIndex).trim();
+        setSpokenWordIndex(before ? before.split(/\s+/).length : 0);
+      };
+
       utterance.onend = () => {
         // Crisp 100ms acoustic clearance buffer after speech ends
         setTimeout(() => {
@@ -247,6 +257,7 @@ export function useQuestionSpeech() {
     audioEnabled,
     setAudioEnabled,
     isSpeaking,
+    spokenWordIndex,
     speak,
     stop,
     supported,

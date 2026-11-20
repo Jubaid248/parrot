@@ -1,7 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 interface SystemCheckProps {
   onStartInterview: (mode: "practice" | "serious") => void;
@@ -12,410 +11,185 @@ interface SystemCheckProps {
   initialMode?: "practice" | "serious";
 }
 
+const MODES = {
+  practice: {
+    chips: ["Your own pace", "Camera optional", "Tap to record"],
+    start: "Start practice",
+    fine: "You can turn your camera on any time.",
+  },
+  serious: {
+    chips: ["Full screen", "Camera on", "Records automatically"],
+    start: "Start interview",
+    fine: "Leaving full screen or switching tabs shows up in your report.",
+  },
+} as const;
+
+/** One small card: pick a mode, (for a real interview) turn on camera and mic, start. */
 export default function SystemCheck({
   onStartInterview,
-  trackName,
   onRequestCamera,
   cameraActive,
   cameraError,
   initialMode = "practice",
 }: SystemCheckProps) {
-  const [selectedMode, setSelectedMode] = useState<"practice" | "serious">(initialMode);
+  const [mode, setMode] = useState<"practice" | "serious">(initialMode);
   const [micActive, setMicActive] = useState(false);
-  const [micVolume, setMicVolume] = useState(0);
-  const [rulesAgreed, setRulesAgreed] = useState(false);
-  const [requestingCamera, setRequestingCamera] = useState(false);
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [micLevel, setMicLevel] = useState(0);
+  const [requesting, setRequesting] = useState(false);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const animFrameRef = useRef<number | null>(null);
+  const frameRef = useRef<number | null>(null);
 
-  // Initialize camera and microphone test
+  // Turn on camera and mic, and listen to the mic so the user can see it works
   const handleEnableMedia = async () => {
-    setRequestingCamera(true);
+    setRequesting(true);
     try {
       const ok = await onRequestCamera();
-      if (!ok) {
-        setRequestingCamera(false);
-        return;
-      }
+      if (!ok) return;
 
-      // Also get user media stream for the local video & mic volume meter preview
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
 
-      setLocalStream(stream);
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play().catch(() => {});
-      }
-
-      // Audio analysis for volume meter
-      const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      const AudioCtx =
+        window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const audioCtx = new AudioCtx();
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 256;
-      const source = audioCtx.createMediaStreamSource(stream);
-      source.connect(analyser);
-
+      audioCtx.createMediaStreamSource(stream).connect(analyser);
       audioContextRef.current = audioCtx;
-      analyserRef.current = analyser;
       setMicActive(true);
 
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-
-      const checkVolume = () => {
-        if (!analyserRef.current) return;
-        analyserRef.current.getByteFrequencyData(dataArray);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        analyser.getByteFrequencyData(data);
         let sum = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / bufferLength;
-        const normalized = Math.min(100, Math.round((avg / 128) * 100));
-        setMicVolume(normalized);
-        animFrameRef.current = requestAnimationFrame(checkVolume);
+        for (let i = 0; i < data.length; i++) sum += data[i];
+        setMicLevel(Math.min(1, sum / data.length / 70));
+        frameRef.current = requestAnimationFrame(tick);
       };
-
-      checkVolume();
+      tick();
     } catch {
-      // Handled via cameraError or permission denial
+      // Permission problems surface through cameraError
     } finally {
-      setRequestingCamera(false);
+      setRequesting(false);
     }
   };
 
-  // Clean up media streams on unmount
   useEffect(() => {
     return () => {
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (frameRef.current) cancelAnimationFrame(frameRef.current);
       if (audioContextRef.current && audioContextRef.current.state !== "closed") {
         audioContextRef.current.close().catch(() => {});
       }
-      if (localStream) {
-        localStream.getTracks().forEach((track) => track.stop());
-      }
+      streamRef.current?.getTracks().forEach((t) => t.stop());
     };
-  }, [localStream]);
+  }, []);
 
-  // Bind video element whenever localStream changes
-  useEffect(() => {
-    if (localStream && videoRef.current) {
-      videoRef.current.srcObject = localStream;
-      videoRef.current.play().catch(() => {});
-    }
-  }, [localStream]);
-
-  const canProceedSerious = cameraActive && micActive && rulesAgreed;
+  const serious = mode === "serious";
+  const devicesReady = cameraActive && micActive;
+  const canStart = !serious || devicesReady;
+  const copy = MODES[mode];
 
   return (
-    <div className="max-w-4xl mx-auto py-6 sm:py-10 px-4 animate-in fade-in duration-500">
-      {/* Header Banner */}
-      <div className="text-center space-y-3 mb-8">
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-moss-light/15 border border-moss-light/30 text-moss-deep text-xs font-mono font-bold tracking-wider uppercase">
-          <span>Before you start</span>
-        </div>
-        <h1 className="font-serif font-normal text-4xl sm:text-5xl text-ink">
-          Choose how you want to practice
-        </h1>
-        <p className="text-sm text-stone-muted max-w-xl mx-auto">
-          Practice at your own pace, or try a real interview: full screen, camera on, and Tota records each answer automatically.
-        </p>
-      </div>
+    <div className="mx-auto max-w-lg px-4 py-10 sm:py-16">
+      <div className="rounded-[1.75rem] border border-line bg-white px-6 pb-6 pt-8 text-center shadow-[0_30px_60px_-30px_rgba(23,34,26,0.18)] sm:px-8">
+        <h1 className="font-serif text-4xl font-normal leading-tight text-ink sm:text-[2.6rem]">Ready when you are</h1>
+        <p className="mt-2 text-sm text-stone-muted">Pick a mode and Tota will take it from there.</p>
 
-      {/* Mode Selector Tabs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-        {/* Practice Mode Tab */}
-        <div
-          onClick={() => setSelectedMode("practice")}
-          className={`cursor-pointer rounded-3xl p-6 border-2 transition-all duration-300 relative overflow-hidden ${
-            selectedMode === "practice"
-              ? "bg-moss/5 border-moss-light shadow-2xl shadow-moss-light/15"
-              : "bg-cream/60 border-line hover:border-stone-soft/40 opacity-80 hover:opacity-100"
-          }`}
-        >
-          <div className="flex items-center justify-between pb-3">
-            <span className="w-2.5 h-2.5 rounded-full bg-moss-light" aria-hidden="true" />
-            <span
-              className={`text-[11px] font-mono px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${
-                selectedMode === "practice"
-                  ? "bg-moss-light/20 text-moss border border-moss-light/40"
-                  : "bg-line text-stone-muted"
+        {/* Mode switch */}
+        <div role="radiogroup" aria-label="Interview mode" className="relative mt-6 grid grid-cols-2 rounded-2xl border border-line bg-cream p-1">
+          <span
+            aria-hidden="true"
+            className={`absolute bottom-1 left-1 top-1 w-[calc(50%-4px)] rounded-xl bg-white shadow-[0_2px_8px_rgba(23,34,26,0.1)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              serious ? "translate-x-full" : ""
+            }`}
+          />
+          {(["practice", "serious"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="radio"
+              aria-checked={mode === m}
+              onClick={() => setMode(m)}
+              className={`relative z-10 rounded-xl py-2.5 text-sm font-semibold transition-colors ${
+                mode === m ? "text-ink" : "text-stone-muted hover:text-ink"
               }`}
             >
-              Relaxed
-            </span>
-          </div>
-          <h3 className="text-lg font-bold text-ink">Practice</h3>
-          <p className="text-xs text-ink/80 mt-2 leading-relaxed">
-            Go at your own pace. Tap the mic when you&apos;re ready, and turn your camera on or off whenever you like.
-          </p>
-          <div className="mt-4 pt-3 border-t border-line flex flex-wrap gap-2 text-[11px] font-mono text-stone-muted">
-            <span className="text-moss font-semibold">✓ Your normal window</span>
-            <span className="text-moss font-semibold">✓ Camera optional</span>
-            <span className="text-moss font-semibold">✓ Tap to record</span>
-          </div>
+              {m === "practice" ? "Practice" : "Real interview"}
+            </button>
+          ))}
         </div>
 
-        {/* Serious Interview Tab */}
-        <div
-          onClick={() => setSelectedMode("serious")}
-          className={`cursor-pointer rounded-3xl p-6 border-2 transition-all duration-300 relative overflow-hidden ${
-            selectedMode === "serious"
-              ? "bg-beak-soft border-beak shadow-2xl shadow-beak/15"
-              : "bg-cream/60 border-line hover:border-stone-soft/40 opacity-80 hover:opacity-100"
-          }`}
-        >
-          <div className="flex items-center justify-between pb-3">
-            <span className="w-2.5 h-2.5 rounded-full bg-beak" aria-hidden="true" />
+        {/* What this mode means */}
+        <div key={mode} className="mt-4 flex min-h-[30px] flex-wrap justify-center gap-2">
+          {copy.chips.map((chip, i) => (
             <span
-              className={`text-[11px] font-mono px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${
-                selectedMode === "serious"
-                  ? "bg-beak/20 text-beak-deep border border-beak/40"
-                  : "bg-line text-stone-muted"
-              }`}
+              key={chip}
+              className="animate-chip-in inline-flex items-center gap-1.5 rounded-full border border-line bg-paper px-3 py-1.5 text-xs text-ink"
+              style={{ animationDelay: `${i * 60}ms` }}
             >
-              Like the real thing
+              <span className={`h-1.5 w-1.5 rounded-full ${serious ? "bg-beak" : "bg-moss-light"}`} aria-hidden="true" />
+              {chip}
             </span>
-          </div>
-          <h3 className="text-lg font-bold text-ink">Real interview</h3>
-          <p className="text-xs text-ink/80 mt-2 leading-relaxed">
-            Full screen, camera on, no notes. Tota asks each question out loud and starts recording as soon as it finishes, just like a live call.
-          </p>
-          <div className="mt-4 pt-3 border-t border-line flex flex-wrap gap-2 text-[11px] font-mono text-stone-muted">
-            <span className="text-beak-deep font-semibold">• Full screen</span>
-            <span className="text-beak-deep font-semibold">• Camera on</span>
-            <span className="text-beak-deep font-semibold">• Records automatically</span>
-          </div>
+          ))}
         </div>
-      </div>
 
-      {/* MODE DETAILS & ACTION PANEL */}
-      {selectedMode === "practice" ? (
-        /* PRACTICE MODE DETAILS */
-        <div className="glass-card rounded-3xl p-6 sm:p-8 border border-moss-light/30 shadow-2xl space-y-6">
-          <div className="flex items-start justify-between flex-wrap gap-4 pb-4 border-b border-line">
-            <div>
-              <h2 className="font-serif font-normal text-xl text-ink flex items-center gap-2">
-                Practice
-              </h2>
-              <p className="text-xs text-stone-muted mt-1">
-                You can start right away. Turn on your camera any time to get eye-contact and body-language feedback.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleEnableMedia}
-                disabled={requestingCamera}
-                className="px-4 py-2 rounded-xl bg-cream hover:bg-line border border-line text-xs font-semibold text-ink transition-colors"
-              >
-                {cameraActive ? "✓ Camera ready" : "Check your camera (optional)"}
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="p-4 rounded-2xl bg-cream/60 border border-line space-y-1">
-              <h4 className="text-xs font-bold text-ink">Your normal window</h4>
-              <p className="text-[11px] text-stone-muted">
-                Nothing goes full screen, and you can glance at your notes.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-cream/60 border border-line space-y-1">
-              <h4 className="text-xs font-bold text-ink">Camera when you want it</h4>
-              <p className="text-[11px] text-stone-muted">
-                Turn it on for body-language feedback, or leave it off.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-cream/60 border border-line space-y-1">
-              <h4 className="text-xs font-bold text-ink">Tap to record</h4>
-              <p className="text-[11px] text-stone-muted">
-                Take a moment to think, then tap the mic when you&apos;re ready.
-              </p>
-            </div>
-          </div>
-
-          <button
-            onClick={() => onStartInterview("practice")}
-            className="w-full py-4 px-6 rounded-2xl bg-moss hover:bg-moss-deep text-cream font-semibold text-base transition-all duration-300 shadow-xl shadow-moss-light/25 hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2"
-          >
-            <span>Start practice</span>
-            <span>→</span>
-          </button>
-        </div>
-      ) : (
-        /* SERIOUS MODE DETAILS & HARDWARE VERIFICATION */
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
-          {/* Left: Camera & Audio Diagnostic Card */}
-          <div className="glass-card rounded-3xl p-6 border border-line shadow-2xl flex flex-col justify-between space-y-6">
-            <div>
-              <div className="flex items-center justify-between pb-3 border-b border-line mb-4">
-                <h2 className="font-serif font-normal text-lg text-ink flex items-center gap-2">
-                  Camera and microphone
-                </h2>
-                <span
-                  className={`text-[11px] font-mono px-2 py-0.5 rounded-full ${
-                    cameraActive && micActive
-                      ? "bg-moss-light/20 text-moss border border-moss-light/40"
-                      : "bg-beak/20 text-beak-deep border border-beak/40"
-                  }`}
-                >
-                  {cameraActive && micActive ? "Ready" : "Needed"}
-                </span>
-              </div>
-
-              {/* Video Preview Box */}
-              <div className="relative aspect-video rounded-2xl overflow-hidden bg-cream border border-line flex items-center justify-center shadow-inner">
-                {localStream ? (
-                  <>
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="w-full h-full object-cover -scale-x-100"
-                    />
-                    <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md text-[11px] font-mono text-moss border border-moss-light/30 flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-moss-light animate-pulse" />
-                      Camera on
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-center p-6 space-y-3">
-                    <div className="w-12 h-12 rounded-2xl bg-cream border border-line flex items-center justify-center mx-auto text-xl text-stone-muted">
-                      <span className="w-3 h-3 rounded-full bg-stone-soft" aria-hidden="true" />
-                    </div>
-                    <p className="text-xs text-stone-muted max-w-xs">
-                      A real interview needs your camera and microphone, so Tota can give you body-language feedback.
-                    </p>
-                    <button
-                      onClick={handleEnableMedia}
-                      disabled={requestingCamera}
-                      className="px-5 py-2.5 rounded-xl bg-moss hover:bg-moss-light text-xs font-bold text-white transition-all shadow-lg shadow-moss/30"
-                    >
-                      {requestingCamera ? "Connecting…" : "Turn on camera and mic"}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {cameraError && (
-                <p className="mt-2 text-xs text-beak-deep bg-beak-soft border border-beak/30 p-2.5 rounded-xl">
-                  {cameraError}
-                </p>
-              )}
-
-              {/* Microphone Volume Meter */}
-              <div className="mt-5 space-y-2">
-                <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-ink/80 flex items-center gap-1.5">
-                    Microphone level
-                  </span>
-                  <span className={micActive ? "text-moss font-bold" : "text-stone-soft"}>
-                    {micActive ? `${micVolume}%` : "Not connected"}
-                  </span>
-                </div>
-                <div className="h-3 w-full bg-cream rounded-full overflow-hidden p-0.5 border border-line">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-moss-light via-tealbird-light to-moss-light transition-all duration-75"
-                    style={{ width: `${micActive ? Math.max(8, micVolume) : 0}%` }}
-                  />
-                </div>
-                <p className="text-[11px] text-stone-soft">
-                  Say a few words. The bar should move as you speak.
-                </p>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              {!localStream && (
-                <button
-                  onClick={handleEnableMedia}
-                  disabled={requestingCamera}
-                  className="w-full py-3 rounded-xl bg-cream hover:bg-line border border-line text-xs font-bold text-ink transition-colors flex items-center justify-center gap-2"
-                >
-                  Allow camera and mic
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Right: Anti-Cheating Protocol & Acceptance */}
-          <div className="glass-card rounded-3xl p-6 border border-line shadow-2xl flex flex-col justify-between space-y-6">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-line">
-                <h2 className="font-serif font-normal text-lg text-ink flex items-center gap-2">
-                  What to expect
-                </h2>
-
-              </div>
-
-              <div className="space-y-2.5">
-                <div className="flex items-start gap-3 p-3 rounded-2xl bg-cream/60 border border-line">
-                  <div>
-                    <h3 className="text-xs font-bold text-ink">Full screen, like a real call</h3>
-                    <p className="text-[11px] text-stone-muted">
-                      The interview fills your screen. If you leave full screen, it&apos;s noted in your report.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 rounded-2xl bg-cream/60 border border-line">
-                  <div>
-                    <h3 className="text-xs font-bold text-ink">Tota records automatically</h3>
-                    <p className="text-[11px] text-stone-muted">
-                      Tota asks each question out loud, then starts recording your answer. No buttons to press.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 rounded-2xl bg-cream/60 border border-line">
-                  <div>
-                    <h3 className="text-xs font-bold text-ink">No notes or other tabs</h3>
-                    <p className="text-[11px] text-stone-muted">
-                      Copy and paste are turned off, and switching tabs is noted in your report.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4 pt-2">
-              <label className="flex items-start gap-3 cursor-pointer select-none p-3 rounded-2xl bg-cream/60 border border-line hover:bg-cream transition-colors">
-                <input
-                  type="checkbox"
-                  checked={rulesAgreed}
-                  onChange={(e) => setRulesAgreed(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 rounded border-stone-soft/40 bg-cream text-moss focus:ring-moss-light cursor-pointer"
-                />
-                <span className="text-xs text-ink/80 leading-relaxed">
-                  I&apos;m ready: full screen, camera on, and automatic recording.
-                </span>
-              </label>
-
-              <button
-                onClick={() => onStartInterview("serious")}
-                disabled={!canProceedSerious}
-                className={`w-full py-4 px-6 rounded-2xl text-base font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-2xl ${
-                  canProceedSerious
-                    ? "bg-ink hover:bg-moss-deep text-cream shadow-ink/20 hover:scale-[1.02]"
-                    : "bg-line text-stone-soft cursor-not-allowed border border-line"
+        {/* Real interview needs camera and mic */}
+        {serious && (
+          <div className="mt-5 flex items-center justify-between gap-3 rounded-2xl border border-line bg-paper px-4 py-3 text-left">
+            <div className="flex items-center gap-2.5">
+              <span
+                aria-hidden="true"
+                className={`h-2 w-2 shrink-0 rounded-full ${
+                  devicesReady ? "bg-moss-light shadow-[0_0_0_4px_rgba(78,154,62,0.18)]" : "bg-beak"
                 }`}
-              >
-                <span>Start real interview</span>
-                <span>→</span>
-              </button>
+              />
+              <span className="text-sm font-medium text-ink">
+                {devicesReady ? "Camera and mic ready" : "Camera and mic needed"}
+              </span>
             </div>
+            {devicesReady ? (
+              <span className="flex h-4 items-end gap-0.5" aria-label="Microphone level">
+                {[0.5, 0.8, 1, 0.7].map((k, i) => (
+                  <span
+                    key={i}
+                    className="w-1 rounded-full bg-moss-light transition-[height] duration-75"
+                    style={{ height: `${Math.max(3, Math.round(16 * Math.min(1, micLevel * k * 1.4)))}px` }}
+                  />
+                ))}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={handleEnableMedia}
+                disabled={requesting}
+                className="whitespace-nowrap rounded-xl border border-line bg-white px-3.5 py-2 text-xs font-semibold text-ink transition-colors hover:bg-cream disabled:opacity-60"
+              >
+                {requesting ? "Connecting…" : "Turn on"}
+              </button>
+            )}
           </div>
-        </div>
-      )}
+        )}
+
+        {serious && cameraError && (
+          <p role="alert" className="mt-2 rounded-xl border border-beak/30 bg-beak-soft p-2.5 text-left text-xs text-beak-deep">
+            {cameraError}
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={() => onStartInterview(mode)}
+          disabled={!canStart}
+          className={`mt-6 flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-base font-semibold text-cream transition-all duration-200 hover:-translate-y-px disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-35 ${
+            serious ? "bg-ink hover:bg-moss-deep" : "bg-moss hover:bg-moss-deep"
+          }`}
+        >
+          {copy.start} <span aria-hidden="true">→</span>
+        </button>
+        <p className="mt-3 text-xs text-stone-soft">{copy.fine}</p>
+      </div>
     </div>
   );
 }
